@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-
+import 'package:camera/camera.dart';
 void main() {
   runApp(const JusticeChainApp());
 }
@@ -30,6 +30,44 @@ class MainSafetyScreen extends StatefulWidget {
 
 class _MainSafetyScreenState extends State<MainSafetyScreen> {
   String _statusMessage = "Checking Permissions...";
+  CameraController? _cameraController;
+  List<CameraDescription>? _cameras;
+  bool _isCameraInitialized = false;
+
+  @override
+  void dispose() {
+    // IMPORTANT: Always dispose the controller when the app is closed 
+    // to free up the camera for other apps.
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeCamera() async {
+    // 1. Get the list of available cameras (front, back, etc.)
+    _cameras = await availableCameras();
+
+    if (_cameras != null && _cameras!.isNotEmpty) {
+      // 2. Initialize the controller using the first camera (usually the back one)
+      // ResolutionPreset.high ensures the evidence is clear for legal use
+      _cameraController = CameraController(
+        _cameras![0], 
+        ResolutionPreset.high,
+        enableAudio: true, // Critical for capturing distress audio
+      );
+
+      try {
+        await _cameraController!.initialize();
+        setState(() {
+          _isCameraInitialized = true;
+          _statusMessage = "System Ready: Monitoring & Camera Active";
+        });
+      } catch (e) {
+        setState(() {
+          _statusMessage = "Camera Error: $e";
+        });
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -39,19 +77,17 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   }
 
   Future<void> _initPermissions() async {
-    // This is your logic integrated into the UI
     Map<Permission, PermissionStatus> statuses = await [
       Permission.camera,
       Permission.microphone,
       Permission.storage,
-      Permission.location, // Added location as per your PRD
+      Permission.location,
     ].request();
 
     if (statuses[Permission.camera]!.isGranted && 
         statuses[Permission.microphone]!.isGranted) {
-      setState(() {
-        _statusMessage = "System Ready: Monitoring Active";
-      });
+      // Logic: Permissions granted -> Now start the camera hardware
+      await _initializeCamera(); 
     } else {
       setState(() {
         _statusMessage = "System Error: Permissions Denied";
