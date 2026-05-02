@@ -30,6 +30,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  camera: ^0.10.5          # To control the lens
+  path_provider: ^2.1.1    # To find a safe place to save the video
+  permission_handler: ^11.0.1 # To ask the user for permission
+  crypto: ^3.0.3           # To generate the SHA-256 hash later
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
