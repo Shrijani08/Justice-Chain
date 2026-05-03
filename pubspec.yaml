@@ -30,6 +30,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # State Management & Caching
+  signals_flutter: ^6.3.0
+  hive_flutter: ^1.1.0
+  
+  # Debugging
+  logger: ^2.4.0
   camera: ^0.10.5          # To control the lens
   path_provider: ^2.1.1    # To find a safe place to save the video
   permission_handler: ^11.0.1 # To ask the user for permission
