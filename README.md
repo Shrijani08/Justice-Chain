@@ -1,16 +1,36 @@
-# justice_chain
+# 🚀 Justice-Chain Audio Detection System
 
-A new Flutter project.
+## 🔧 Setup Instructions
 
-## Getting Started
+### 1. Create virtual environment
 
-This project is a starting point for a Flutter application.
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
 
-A few resources to get you started if this is your first Flutter project:
+### 2. Install dependencies
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+```bash
+pip install -r requirements.txt
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### 3. Run live detection
+
+```bash
+python live_detection.py
+```
+
+---
+
+## 🎤 Usage
+
+* Speak normally → shows "normal"
+* Shout "HELP" / scream → triggers distress detection
+
+---
+
+## ⚠️ Notes
+
+* Ensure microphone access is enabled
+* Use Python 3.10 for compatibility
