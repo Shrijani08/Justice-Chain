@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/app_services.dart';
+import 'core/ai_service.dart';
 import 'presentation/home_screen.dart';
 
 void main() async {
@@ -8,6 +9,11 @@ void main() async {
 
   // Step 1: Initialize Hive and Logger (from your core folder)
   await AppServices.init();
+
+  // Warm-load the TFLite model so the UI can report AI readiness early.
+  // EmergencyController registers the actual distress callback after the camera
+  // is initialized in home_screen.dart.
+  await AIService.instance.initModel();
 
   runApp(const JusticeChainApp());
 }
