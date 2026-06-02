@@ -8,7 +8,6 @@ import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../logic/safety_signals.dart';
-import 'audio_preprocessor.dart';
 
 typedef DistressDetectedCallback = Future<void> Function(AIDistressEvent event);
 
@@ -45,20 +44,16 @@ class AIService {
 
   factory AIService() => instance;
 
-  static const String _modelAssetPath =
-      'assets/models/justice_chain_model.tflite';
+  static const String _modelAssetPath = 'assets/models/distress_model.tflite';
   static const List<String> _classes = ['distress', 'happy', 'normal'];
-  static const double distressThreshold = 0.85;
-  static const int _sampleRate = AudioPreprocessor.sampleRate;
-  static const int _windowSampleCount = AudioPreprocessor.chunkSampleCount;
+  static const double distressThreshold = 0.70;
+
+  static const int _sampleRate = 16000;
+  static const int _windowSampleCount = 32000;
   static const int _inferenceStrideSamples = _sampleRate;
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final ListQueue<double> _rollingSamples = ListQueue<double>();
-  
-  // Temporal validation sliding queue to filter out sporadic environment spikes
-  final ListQueue<double> _recentConfidences = ListQueue<double>();
-  static const int _requiredConsensusFrames = 3;
 
   Interpreter? _interpreter;
   StreamSubscription<Uint8List>? _audioSubscription;
@@ -80,7 +75,7 @@ class AIService {
     if (_isModelLoaded || _isInitializing) return;
 
     _isInitializing = true;
-    aiStatus.value = 'Loading AI distress model...';
+    aiStatus.value = 'Loading AI 1D distress model...';
 
     try {
       final options = InterpreterOptions()..threads = 2;
@@ -89,7 +84,8 @@ class AIService {
         _modelAssetPath,
         options: options,
       );
-      _interpreter!.resizeInputTensor(0, const [1, 128, 128, 1]);
+
+      _interpreter!.resizeInputTensor(0, const [1, 32000, 1]);
       _interpreter!.allocateTensors();
       _runModelSelfTest();
 
@@ -100,19 +96,7 @@ class AIService {
       aiPrediction.value = 'none';
       _lastModelError = null;
 
-      developer.log(
-        'TFLite model loaded from $_modelAssetPath',
-        name: 'JusticeChain.AI',
-      );
-      debugPrint('JusticeChain.AI: TFLite model loaded from $_modelAssetPath');
-      developer.log(
-        'Input tensor shape: ${_interpreter?.getInputTensor(0).shape}',
-        name: 'JusticeChain.AI',
-      );
-      developer.log(
-        'Output tensor shape: ${_interpreter?.getOutputTensor(0).shape}',
-        name: 'JusticeChain.AI',
-      );
+      developer.log('1D CNN TFLite model loaded', name: 'JusticeChain.AI');
     } catch (error, stackTrace) {
       _isModelLoaded = false;
       aiModelReady.value = false;
@@ -121,12 +105,11 @@ class AIService {
       aiStatus.value = 'AI model load failed: $_lastModelError';
 
       developer.log(
-        'Failed to initialize TFLite interpreter: $error',
+        'Failed to initialize 1D TFLite interpreter: $error',
         name: 'JusticeChain.AI',
         error: error,
         stackTrace: stackTrace,
       );
-      debugPrint('JusticeChain.AI: model load failed: $error');
     } finally {
       _isInitializing = false;
     }
@@ -160,7 +143,7 @@ class AIService {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _sampleRate,
         numChannels: 1,
-        autoGain: false,
+        autoGain: true,
         echoCancel: false,
         noiseSuppress: false,
         streamBufferSize: 2048,
@@ -168,32 +151,16 @@ class AIService {
     );
 
     _rollingSamples.clear();
-    _recentConfidences.clear();
     _samplesSinceLastInference = 0;
     _isMonitoring = true;
     aiActive.value = true;
-    aiDistressDetected.value = false;
     aiStatus.value = 'AI listening at 16 kHz';
-
-    developer.log(
-      'Microphone stream initialized: PCM16 mono, $_sampleRate Hz.',
-      name: 'JusticeChain.AI',
-    );
-    debugPrint(
-      'JusticeChain.AI: microphone stream initialized PCM16 mono $_sampleRate Hz',
-    );
 
     _audioSubscription = stream.listen(
       _handlePcmBytes,
       onError: (Object error, StackTrace stackTrace) {
         aiStatus.value = 'AI microphone stream error';
         aiActive.value = false;
-        developer.log(
-          'Microphone stream error: $error',
-          name: 'JusticeChain.AI',
-          error: error,
-          stackTrace: stackTrace,
-        );
       },
       cancelOnError: false,
     );
@@ -215,7 +182,6 @@ class AIService {
     }
 
     _rollingSamples.clear();
-    _recentConfidences.clear();
     _samplesSinceLastInference = 0;
     _isMonitoring = false;
     _isPreprocessing = false;
@@ -225,27 +191,20 @@ class AIService {
 
   Future<void> pauseForRecording() async {
     if (_isPausedForRecording) return;
-
     _isPausedForRecording = true;
     await stopMonitoring(status: 'AI paused while recording');
-
-    developer.log(
-      'AI microphone monitoring paused for camera recording.',
-      name: 'JusticeChain.AI',
-    );
   }
 
   Future<void> resumeAfterRecording() async {
     if (!_isPausedForRecording) return;
-
     _isPausedForRecording = false;
-    aiDistressDetected.value = false;
     await startMonitoring();
   }
 
   void _handlePcmBytes(Uint8List bytes) {
+    if (bytes.isEmpty || !_isMonitoring || isRecording.value) return;
+
     final samples = _pcm16BytesToSamples(bytes);
-    if (samples.isEmpty || !_isMonitoring || isRecording.value) return;
 
     for (final sample in samples) {
       _rollingSamples.addLast(sample);
@@ -255,12 +214,6 @@ class AIService {
     }
 
     _samplesSinceLastInference += samples.length;
-
-    developer.log(
-      'Audio chunk captured: ${samples.length} samples, '
-      'rolling=${_rollingSamples.length}/$_windowSampleCount.',
-      name: 'JusticeChain.AI',
-    );
 
     if (_rollingSamples.length == _windowSampleCount &&
         _samplesSinceLastInference >= _inferenceStrideSamples &&
@@ -284,57 +237,31 @@ class AIService {
     if (!_isModelLoaded || _interpreter == null || isRecording.value) return;
 
     _isPreprocessing = true;
-    aiStatus.value = 'AI preprocessing audio window';
+    aiStatus.value = 'AI executing 1D CNN prediction';
 
     try {
-      final processed = await compute(preprocessAudioChunk, samples);
-      final inputTensor = processed['tensor'];
-      final rms = (processed['rms'] as num?)?.toDouble() ?? 0.0;
-      final isSilent = processed['silent'] == true;
+      double sumSquares = samples.fold(0.0, (sum, val) => sum + (val * val));
+      double rms = math.sqrt(sumSquares / samples.length);
 
-      developer.log(
-        'Preprocessing completed. RMS=${rms.toStringAsFixed(5)}, silent=$isSilent.',
-        name: 'JusticeChain.AI',
-      );
-      debugPrint(
-        'JusticeChain.AI: preprocessing completed rms=${rms.toStringAsFixed(5)} silent=$isSilent',
-      );
-
-      if (isSilent) {
-        aiStatus.value = 'AI listening: silence filtered';
+      if (rms < 0.005) {
+        aiStatus.value = 'AI listening: environment quiet';
         aiPrediction.value = 'silence';
         aiConfidence.value = 0.0;
-        _recentConfidences.clear(); 
         return;
       }
 
-      final prediction = evaluateDistressSignals(inputTensor);
+      final prediction = evaluateDistressSignals(samples);
       aiPrediction.value = prediction.label;
-      aiConfidence.value = prediction.distressConfidence;
+      aiConfidence.value = prediction.confidence;
 
-      _recentConfidences.addLast(prediction.distressConfidence);
-      while (_recentConfidences.length > _requiredConsensusFrames) {
-        _recentConfidences.removeFirst();
-      }
-
-      final percent = (prediction.distressConfidence * 100).toStringAsFixed(0);
+      final percent = (prediction.confidence * 100).toStringAsFixed(0);
       aiStatus.value = 'AI prediction: ${prediction.label} ($percent%)';
 
-      developer.log(
-        'Inference completed. class=${prediction.label}, '
-        'distressConfidence=${prediction.distressConfidence.toStringAsFixed(3)}.',
-        name: 'JusticeChain.AI',
-      );
-
-      bool meetsConsensus = _recentConfidences.length == _requiredConsensusFrames &&
-          _recentConfidences.every((c) => c >= distressThreshold);
-
-      if (meetsConsensus) {
-        aiDistressDetected.value = true;
-        _recentConfidences.clear(); 
-        
+      // FIXED: Instant verification check. Fires event immediately if prediction matches and clears threshold
+      if (prediction.label.toLowerCase() == 'distress' &&
+          prediction.confidence >= distressThreshold) {
         developer.log(
-          '🔥 CONSENSUS TRIGGERED: Distress confirmed across sequential frames.',
+          '🔥 INSTANT THRESHOLD PASSED: Distress confirmed ($percent%)',
           name: 'JusticeChain.AI',
         );
 
@@ -345,13 +272,11 @@ class AIService {
             isSimulated: false,
           ),
         );
-      } else {
-        aiDistressDetected.value = false;
       }
     } catch (error, stackTrace) {
       aiStatus.value = 'AI inference pipeline error';
       developer.log(
-        'Realtime AI pipeline failed: $error',
+        'Realtime AI 1D pipeline failed: $error',
         name: 'JusticeChain.AI',
         error: error,
         stackTrace: stackTrace,
@@ -361,9 +286,8 @@ class AIService {
     }
   }
 
-  AIPrediction evaluateDistressSignals(dynamic inputTensor) {
+  AIPrediction evaluateDistressSignals(List<double> inputRawAudio) {
     if (!_isModelLoaded || _interpreter == null) {
-      aiStatus.value = 'AI inference skipped: model not ready';
       return const AIPrediction(
         label: 'unavailable',
         confidence: 0.0,
@@ -371,6 +295,10 @@ class AIService {
         probabilities: <double>[],
       );
     }
+
+    var inputTensor = [
+      inputRawAudio.map((val) => [val]).toList(),
+    ];
 
     final outputShape = _interpreter!.getOutputTensor(0).shape;
     final outputTensor = _buildFilledTensor(outputShape, 0.0);
@@ -380,34 +308,18 @@ class AIService {
     final rawValues = _flattenNumericValues(outputTensor);
     final prediction = _parsePrediction(rawValues);
 
-    developer.log(
-      'Raw model output: ${rawValues.map((v) => v.toStringAsFixed(4)).toList()}',
-      name: 'JusticeChain.AI',
-    );
-
     return prediction;
   }
 
   void _runModelSelfTest() {
     final zeroInput = [
-      List<List<List<double>>>.generate(
-        128,
-        (_) => List<List<double>>.generate(128, (_) => [0.0]),
-      ),
+      List.generate(32000, (_) => [0.0]),
     ];
     final outputTensor = _buildFilledTensor(
       _interpreter!.getOutputTensor(0).shape,
       0.0,
     );
-
     _interpreter!.run(zeroInput, outputTensor);
-
-    developer.log(
-      'TFLite self-test passed with output '
-      '${_flattenNumericValues(outputTensor).map((v) => v.toStringAsFixed(4)).toList()}.',
-      name: 'JusticeChain.AI',
-    );
-    debugPrint('JusticeChain.AI: TFLite self-test passed');
   }
 
   AIPrediction _parsePrediction(List<double> rawValues) {
@@ -420,21 +332,6 @@ class AIService {
       );
     }
 
-    if (rawValues.length == 1) {
-      final value = rawValues.first;
-      final distressConfidence = value >= 0.0 && value <= 1.0
-          ? value
-          : 1.0 / (1.0 + math.exp(-value));
-      return AIPrediction(
-        label: distressConfidence >= distressThreshold ? 'distress' : 'normal',
-        confidence: distressConfidence >= distressThreshold
-            ? distressConfidence
-            : 1.0 - distressConfidence,
-        distressConfidence: distressConfidence,
-        probabilities: <double>[distressConfidence],
-      );
-    }
-
     final classCount = math.min(_classes.length, rawValues.length);
     final selectedValues = rawValues.take(classCount).toList();
     final probabilities = _looksLikeProbabilities(selectedValues)
@@ -443,15 +340,15 @@ class AIService {
 
     var bestIndex = 0;
     for (var i = 1; i < probabilities.length; i++) {
-      if (probabilities[i] > probabilities[bestIndex]) {
-        bestIndex = i;
-      }
+      if (probabilities[i] > probabilities[bestIndex]) bestIndex = i;
     }
+
+    double distressValue = probabilities[0];
 
     return AIPrediction(
       label: _classes[bestIndex],
       confidence: probabilities[bestIndex],
-      distressConfidence: probabilities[0],
+      distressConfidence: distressValue,
       probabilities: probabilities,
     );
   }
@@ -474,19 +371,13 @@ class AIService {
 
     aiConfidence.value = normalizedConfidence;
     aiPrediction.value = 'distress';
-    aiDistressDetected.value = true;
     aiStatus.value = 'Demo distress detected';
 
-    developer.log(
-      'Demo AI distress trigger fired at confidence '
-      '${normalizedConfidence.toStringAsFixed(3)}.',
-      name: 'JusticeChain.AI',
-    );
-
+    // FIXED: Changed string label to 'distress' to match Controller validation mapping rules perfectly
     await _notifyDistressDetected(
       AIDistressEvent(
         confidence: normalizedConfidence,
-        label: 'demo_distress',
+        label: 'distress',
         isSimulated: true,
       ),
     );
@@ -505,9 +396,7 @@ class AIService {
 
   dynamic _buildFilledTensor(List<int> shape, double value) {
     if (shape.isEmpty) return value;
-    if (shape.length == 1) {
-      return List<double>.filled(shape.first, value);
-    }
+    if (shape.length == 1) return List<double>.filled(shape.first, value);
 
     final remainingShape = shape.sublist(1);
     return List<dynamic>.generate(
@@ -518,9 +407,7 @@ class AIService {
 
   List<double> _flattenNumericValues(dynamic value) {
     if (value is num) return <double>[value.toDouble()];
-    if (value is List) {
-      return value.expand(_flattenNumericValues).toList();
-    }
+    if (value is List) return value.expand(_flattenNumericValues).toList();
     return <double>[];
   }
 

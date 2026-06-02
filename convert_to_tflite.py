@@ -1,28 +1,31 @@
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # force CPU only for conversion
 
 import tensorflow as tf
 
+print("📦 Loading the trained Keras model...")
+model = tf.keras.models.load_model("justice_chain_1d_model")
+model.summary()
 
-model_file = "justice_chain_model.h5"
-if not os.path.exists(model_file):
-    raise FileNotFoundError(f"Missing base architecture file: {model_file}")
-
-model = tf.keras.models.load_model(model_file, compile=False)
-
+print("🔄 Converting architecture to memory-optimized TFLite binary...")
 converter = tf.lite.TFLiteConverter.from_keras_model(model)
 
-# Keep the app model on standard TFLite builtins only. The Flutter app uses
-# tflite_flutter 0.11.0, which bundles Android TensorFlow Lite 2.11. A pure
-# float32 conversion avoids newer dynamic-range quantized op versions that can
-# load in desktop TensorFlow but fail on the mobile runtime.
+# Apply standard optimizations to minimize model size
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
 converter.target_spec.supported_ops = [
     tf.lite.OpsSet.TFLITE_BUILTINS,
+    tf.lite.OpsSet.SELECT_TF_OPS
 ]
+converter.allow_custom_ops = True  # needed for some Conv1D ops in TFLite
 
 tflite_model = converter.convert()
 
-output_path = os.path.join("assets", "models", "justice_chain_model.tflite")
-with open(output_path, "wb") as f:
+# Save the binary
+output_filename = "distress_model.tflite"
+with open(output_filename, "wb") as f:
     f.write(tflite_model)
 
-print("Clean Android-compatible float32 TFLite asset generated successfully!")
+print(f"✅ Converted successfully!")
+print(f"📁 File saved as: {output_filename}")
+print(f"📏 Model size: {len(tflite_model) / 1024:.1f} KB")
