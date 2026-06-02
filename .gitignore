@@ -49,3 +49,6 @@ app.*.map.json
 android/build/
 evidence.mp4
 *.png
+
+# traininf and testing datasets
+*.npy

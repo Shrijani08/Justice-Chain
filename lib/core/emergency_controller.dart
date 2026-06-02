@@ -1,5 +1,4 @@
 import 'dart:developer' as developer;
-
 import 'ai_service.dart';
 import '../logic/safety_signals.dart';
 
@@ -12,7 +11,31 @@ class EmergencyController {
   /// Bootstraps localized AI screening routines.
   static Future<void> startBackgroundMonitoring() async {
     await _aiService.startMonitoring(
-      onDistressDetected: _handleAIDistressDetected,
+      onDistressDetected: (AIDistressEvent event) async {
+        final confidencePercent = (event.confidence * 100).toStringAsFixed(0);
+
+        // Update operational AI signals instantly for the UI layout
+        aiPrediction.value = event.label;
+        aiConfidence.value = event.confidence;
+        aiStatus.value = "AI Monitoring: ${event.label} ($confidencePercent%)";
+
+        // CRITICAL: Single Point of Entry Guard
+        // If we are already recording, ignore incoming duplicate triggers
+        if (isRecording.value ||
+            (cameraController != null &&
+                cameraController!.value.isRecordingVideo)) {
+          return;
+        }
+
+        // If the AI confirms a valid distress event, flip the signal to let the UI effect handle it cleanly
+        if (event.label.toLowerCase() == 'distress') {
+          developer.log(
+            '🔥 AI Brain verified distress status ($confidencePercent%). Firing reactive safety signal.',
+            name: 'JusticeChain.Controller',
+          );
+          aiDistressDetected.value = true;
+        }
+      },
     );
   }
 
@@ -24,75 +47,40 @@ class EmergencyController {
     await _aiService.simulateDistressDetection();
   }
 
-  static Future<void> _handleAIDistressDetected(AIDistressEvent event) async {
-    final confidencePercent = (event.confidence * 100).toStringAsFixed(0);
-
-    // 1. CRITICAL CONCURRENCY GUARD: Instantly drop processing if system is already recording
-    if (isRecording.value || (cameraController != null && cameraController!.value.isRecordingVideo)) {
-      developer.log(
-        'AI trigger ignored because an emergency recording is already active.',
-        name: 'JusticeChain.Controller',
-      );
-      return;
-    }
-
-    developer.log(
-      'AI distress detected (${event.label}, $confidencePercent%). Processing system initialization...',
-      name: 'JusticeChain.Controller',
-    );
-
-    if (cameraController == null || !cameraController!.value.isInitialized) {
-      appStatus.value = 'AI detected distress, but camera is not ready';
-      developer.log(
-        'AI trigger ignored because the camera hardware is not initialized.',
-        name: 'JusticeChain.Controller',
-      );
-      return;
-    }
-
-    // 2. PAUSE MICROPHONE STREAM FIRST: Avoids hardware device lock leaks with camera audio tracks
-    await _aiService.pauseForRecording();
-
-    appStatus.value =
-        'AI distress detected ($confidencePercent%). Recording evidence...';
-
-    try {
-      await startRecording();
-      
-      developer.log(
-        'AI trigger successfully engaged video+audio emergency recording channels.',
-        name: 'JusticeChain.Controller',
-      );
-      
-      // Keep this visible in Android logcat during Review-2 device demos.
-      // ignore: avoid_print
-      print('JusticeChain.Controller: AI trigger started emergency recording');
-    } catch (e) {
-      developer.log(
-        'Failed to engage recording layers via AI trigger: $e',
-        name: 'JusticeChain.Controller',
-        error: e,
-      );
-      // Fallback: Attempt to resume monitoring if hardware activation fails
-      await _aiService.resumeAfterRecording();
-    }
-  }
-
   // --- HARDWARE CAMERA CHANNELS ---
 
   static Future<void> startRecording() async {
     if (cameraController == null || !cameraController!.value.isInitialized) {
+      developer.log(
+        'Recording aborted: Camera hardware reference is missing or uninitialized.',
+        name: 'JusticeChain.Controller',
+      );
       return;
     }
     if (cameraController!.value.isRecordingVideo) return;
 
-    // Double check that the AI stream has paused monitoring before starting
-    await _aiService.pauseForRecording();
-    
     try {
+      // 1. Pause microphone streaming first to avoid OS-level device lock leaks with video audio track
+      await _aiService.pauseForRecording();
+
+      // 2. Fire hardware implementation
       await cameraController!.startVideoRecording();
+
+      // 3. Update states sequentially to update UI widgets
       isRecording.value = true;
-    } catch (_) {
+      appStatus.value = "RECORDING EVIDENCE...";
+
+      developer.log(
+        '🎬 Emergency recording channels successfully locked and active.',
+        name: 'JusticeChain.Controller',
+      );
+    } catch (e) {
+      developer.log(
+        'Failed to engage native camera recording layer: $e',
+        name: 'JusticeChain.Controller',
+        error: e,
+      );
+      // Fallback recovery: Ensure monitoring resumes if native camera deployment crashes
       await _aiService.resumeAfterRecording();
       rethrow;
     }
@@ -102,12 +90,24 @@ class EmergencyController {
     if (cameraController == null || !cameraController!.value.isRecordingVideo) {
       return null;
     }
-    final video = await cameraController!.stopVideoRecording();
-    isRecording.value = false;
-    
-    // Safely re-engages microphone polling after file pointers are generated
-    await _aiService.resumeAfterRecording();
-    return video;
+
+    try {
+      final video = await cameraController!.stopVideoRecording();
+      isRecording.value = false;
+
+      // Safely re-engages microphone polling after file pointers are completely generated
+      await _aiService.resumeAfterRecording();
+      return video;
+    } catch (e) {
+      developer.log(
+        'Failed to cleanly stop camera recording layers: $e',
+        name: 'JusticeChain.Controller',
+        error: e,
+      );
+      isRecording.value = false;
+      await _aiService.resumeAfterRecording();
+      return null;
+    }
   }
 
   static Future<void> shutdownMonitoring() async {
