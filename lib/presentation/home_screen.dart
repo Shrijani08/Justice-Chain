@@ -12,6 +12,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../core/app_services.dart';
 import '../core/emergency_controller.dart';
 import '../logic/safety_signals.dart';
+import 'guardian_pairing_screen.dart'; // NEW: Import for the pairing screen
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -23,11 +24,11 @@ class MainSafetyScreen extends StatefulWidget {
 class _MainSafetyScreenState extends State<MainSafetyScreen> {
   CameraController? _cameraController;
   bool _isProcessingSave = false;
-  
+
   // Create a cleanup variable for the background signal listener
   EffectCleanup? _distressEffectCleanup;
 
-  // NEW: Safely tracks the 45-second automatic cutoff timer
+  // Safely tracks the 45-second automatic cutoff timer
   Timer? _recordingTimeoutTimer;
 
   @override
@@ -47,10 +48,12 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
       // If AI detects distress, camera is initialized, and we aren't already recording -> TRIGGER!
       if (isDistressed && isReady && !recordingNow) {
-        logger.w("🔥 AUTOMATIC TRIGGER: Distress detected by AI! Starting camera recording.");
-        
+        logger.w(
+          "🔥 AUTOMATIC TRIGGER: Distress detected by AI! Starting camera recording.",
+        );
+
         // Consume the trigger signal instantly so it doesn't cause an endless loop when stopped later
-        aiDistressDetected.value = false; 
+        aiDistressDetected.value = false;
 
         // Unawaited ensures we don't block the signal thread while the camera warms up
         unawaited(startEmergencyRecording());
@@ -60,9 +63,10 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
   @override
   void dispose() {
-    // NEW: Always cancel the timer to prevent memory leaks or crashes if the screen is closed
+    // Always cancel the timer to prevent memory leaks or crashes if the screen is closed
     _recordingTimeoutTimer?.cancel();
-    _distressEffectCleanup?.call(); // Kill the background listener when screen closes
+    _distressEffectCleanup
+        ?.call(); // Kill the background listener when screen closes
     unawaited(EmergencyController.shutdownMonitoring());
     _cameraController?.dispose();
     super.dispose();
@@ -113,7 +117,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       for (final camera in cameras) {
         final controller = CameraController(
           camera,
-          ResolutionPreset.medium, // Medium preset prevents hardware bandwidth crashes
+          ResolutionPreset
+              .medium, // Medium preset prevents hardware bandwidth crashes
           enableAudio: true,
         );
 
@@ -155,16 +160,17 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       appStatus.value = "RECORDING EVIDENCE...";
       logger.w("Emergency Recording Started!");
 
-      // NEW: Start the robust 45-second cutoff timer
+      // Start the robust 45-second cutoff timer
       _recordingTimeoutTimer?.cancel(); // Kill any stale timers first
       _recordingTimeoutTimer = Timer(const Duration(seconds: 45), () {
         // Safe execution: Only stop if the widget is still on-screen and it is actually still recording
         if (mounted && isRecording.value) {
-          logger.w("⏱️ AUTOMATIC TIMEOUT: 45 seconds reached. Saving captured evidence...");
+          logger.w(
+            "⏱️ AUTOMATIC TIMEOUT: 45 seconds reached. Saving captured evidence...",
+          );
           stopEmergencyRecording();
         }
       });
-
     } catch (e) {
       logger.e("Failed to start recording: $e");
     }
@@ -177,7 +183,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     }
     if (_isProcessingSave) return;
 
-    // NEW: Instantly kill the timer if the user manually hits STOP. Prevents double-stop crashes.
+    // Instantly kill the timer if the user manually hits STOP. Prevents double-stop crashes.
     _recordingTimeoutTimer?.cancel();
     _recordingTimeoutTimer = null;
 
@@ -197,7 +203,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       }
 
       isRecording.value = false;
-      aiDistressDetected.value = false; // Double guard: ensuring clean state layout
+      aiDistressDetected.value =
+          false; // Double guard: ensuring clean state layout
 
       final directory = await getApplicationDocumentsDirectory();
       final vaultDir = Directory('${directory.path}/JusticeChain');
@@ -331,8 +338,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                           isDistressDetected
                               ? Icons.warning_amber
                               : (isAiActive
-                                  ? Icons.hearing
-                                  : Icons.psychology_alt),
+                                    ? Icons.hearing
+                                    : Icons.psychology_alt),
                           color: isDistressDetected
                               ? Colors.red
                               : (isAiActive ? Colors.green : Colors.grey),
@@ -412,8 +419,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     _isProcessingSave
                         ? "SAVING TO VAULT..."
                         : (isRecordingActive
-                            ? "STOP RECORDING"
-                            : "START TEST RECORD"),
+                              ? "STOP RECORDING"
+                              : "START TEST RECORD"),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isRecordingActive
@@ -439,6 +446,25 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                   onPressed: _debugPrintVault,
                   icon: const Icon(Icons.storage),
                   label: const Text("Debug: Print Vault Contents"),
+                ),
+                const SizedBox(height: 12),
+
+                // NEW: Guardian Pairing Navigation Button
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const GuardianPairingScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Add a Guardian (QR)'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueGrey,
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ] else ...[
                 ElevatedButton.icon(
