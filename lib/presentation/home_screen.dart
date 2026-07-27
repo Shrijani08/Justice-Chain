@@ -12,7 +12,8 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../core/app_services.dart';
 import '../core/emergency_controller.dart';
 import '../logic/safety_signals.dart';
-import 'guardian_pairing_screen.dart'; // NEW: Import for the pairing screen
+import 'guardian_pairing_screen.dart'; 
+import 'guardian_scanner_screen.dart'; // NEW: Import for the scanner screen
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -65,8 +66,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   void dispose() {
     // Always cancel the timer to prevent memory leaks or crashes if the screen is closed
     _recordingTimeoutTimer?.cancel();
-    _distressEffectCleanup
-        ?.call(); // Kill the background listener when screen closes
+    _distressEffectCleanup?.call(); // Kill the background listener when screen closes
     unawaited(EmergencyController.shutdownMonitoring());
     _cameraController?.dispose();
     super.dispose();
@@ -117,8 +117,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       for (final camera in cameras) {
         final controller = CameraController(
           camera,
-          ResolutionPreset
-              .medium, // Medium preset prevents hardware bandwidth crashes
+          ResolutionPreset.medium, // Medium preset prevents hardware bandwidth crashes
           enableAudio: true,
         );
 
@@ -203,8 +202,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       }
 
       isRecording.value = false;
-      aiDistressDetected.value =
-          false; // Double guard: ensuring clean state layout
+      aiDistressDetected.value = false; // Double guard: ensuring clean state layout
 
       final directory = await getApplicationDocumentsDirectory();
       final vaultDir = Directory('${directory.path}/JusticeChain');
@@ -338,8 +336,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                           isDistressDetected
                               ? Icons.warning_amber
                               : (isAiActive
-                                    ? Icons.hearing
-                                    : Icons.psychology_alt),
+                                  ? Icons.hearing
+                                  : Icons.psychology_alt),
                           color: isDistressDetected
                               ? Colors.red
                               : (isAiActive ? Colors.green : Colors.grey),
@@ -419,8 +417,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     _isProcessingSave
                         ? "SAVING TO VAULT..."
                         : (isRecordingActive
-                              ? "STOP RECORDING"
-                              : "START TEST RECORD"),
+                            ? "STOP RECORDING"
+                            : "START TEST RECORD"),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isRecordingActive
@@ -449,22 +447,40 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // NEW: Guardian Pairing Navigation Button
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const GuardianPairingScreen(),
+                // NEW: Guardian Pairing Controls Side-by-Side
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const GuardianPairingScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.qr_code_2),
+                      label: const Text('Show My QR'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueGrey,
+                        foregroundColor: Colors.white,
                       ),
-                    );
-                  },
-                  icon: const Icon(Icons.qr_code_scanner),
-                  label: const Text('Add a Guardian (QR)'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueGrey,
-                    foregroundColor: Colors.white,
-                  ),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const GuardianScannerScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.qr_code_scanner),
+                      label: const Text('Scan QR'),
+                    ),
+                  ],
                 ),
               ] else ...[
                 ElevatedButton.icon(
