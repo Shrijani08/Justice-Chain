@@ -58,6 +58,8 @@ dependencies:
   qr_flutter: ^4.1.0
   # NEW: QR Code Scanning
   mobile_scanner: ^5.2.0
+  # NEW: Offline P2P Networking
+  nearby_connections: ^3.2.0
 
 dev_dependencies:
   flutter_test:
