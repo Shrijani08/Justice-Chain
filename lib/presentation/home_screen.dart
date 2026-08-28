@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:hive/hive.dart';
 import '../logic/safety_signals.dart';
 import '../core/app_services.dart';
+import '../services/ipfs_service.dart';
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -105,30 +106,46 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
   // --- SECURITY & CACHING (THE VAULT) ---
 
-  Future<void> _secureEvidence(String filePath) async {
-    try {
-      appStatus.value = "Sealing Evidence...";
-      
-      // Calculate SHA-256 Hash
-      final bytes = await File(filePath).readAsBytes();
-      final hash = sha256.convert(bytes).toString();
-      
-      // Store metadata in Hive
-      var vaultBox = Hive.box('vault_box');
-      await vaultBox.add({
-        'path': filePath,
-        'hash': hash,
-        'timestamp': DateTime.now().toIso8601String(),
-        'status': 'locally_secured',
-      });
-      
-      logger.i("Fingerprint Generated: $hash");
-      appStatus.value = "Evidence Secured & Fingerprinted.";
-    } catch (e) {
-      logger.e("Securing evidence failed: $e");
-      appStatus.value = "Security Error: Hash Failed";
-    }
+Future<void> _secureEvidence(String filePath) async {
+  try {
+    appStatus.value = "Sealing Evidence...";
+
+    // Read the recorded video
+    final file = File(filePath);
+    final bytes = await file.readAsBytes();
+
+    // Generate SHA-256 fingerprint
+    final hash = sha256.convert(bytes).toString();
+
+    logger.i("Fingerprint Generated: $hash");
+
+    // Upload video to IPFS through our backend
+    appStatus.value = "Uploading Evidence to IPFS...";
+
+    final cid = await IpfsService.uploadFile(file);
+
+    logger.i("IPFS Upload Successful!");
+    logger.i("CID: $cid");
+
+    // Store evidence metadata locally
+    final vaultBox = Hive.box('vault_box');
+
+    await vaultBox.add({
+      'path': filePath,
+      'hash': hash,
+      'cid': cid,
+      'timestamp': DateTime.now().toIso8601String(),
+      'status': 'ipfs_secured',
+    });
+
+    logger.i("Evidence saved to Hive.");
+    appStatus.value = "Evidence Secured on IPFS.";
+  } catch (e) {
+    logger.e("Securing evidence failed: $e");
+
+    appStatus.value = "Security Error: $e";
   }
+}
 
   // --- DEBUG TOOLS ---
 

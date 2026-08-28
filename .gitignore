@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Backend secrets and dependencies
+.env
+backend/.env
+backend/node_modules/
+# Generated Android build files
+/android/build/
