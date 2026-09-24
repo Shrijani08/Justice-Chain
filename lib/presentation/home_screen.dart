@@ -13,7 +13,8 @@ import '../core/app_services.dart';
 import '../core/emergency_controller.dart';
 import '../logic/safety_signals.dart';
 import 'guardian_pairing_screen.dart'; 
-import 'guardian_scanner_screen.dart'; // NEW: Import for the scanner screen
+import 'guardian_scanner_screen.dart'; 
+import 'package:justice_chain/core/pinata_service.dart';
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -217,12 +218,12 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       final savedFile = await File(tempVideo.path).copy(newPath);
       await File(tempVideo.path).delete();
 
-      await _secureEvidence(savedFile.path);
-
       logger.i("Evidence Saved Permanently:");
       logger.i(savedFile.path);
 
-      appStatus.value = "Evidence Secured in JusticeChain Vault";
+      // Seal evidence and trigger background IPFS upload
+      await _secureEvidence(savedFile.path);
+
     } catch (e) {
       logger.e("Failed to stop recording: $e");
       appStatus.value = "Recording Save Failed";
@@ -235,28 +236,71 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     }
   }
 
-  // --- SECURITY & CACHING (THE VAULT) ---
+  // --- SECURITY, CACHING & AUTOMATIC IPFS UPLOAD ---
 
   Future<void> _secureEvidence(String filePath) async {
     try {
       appStatus.value = "Sealing Evidence...";
 
-      final bytes = await File(filePath).readAsBytes();
-      final hash = sha256.convert(bytes).toString();
+      final file = File(filePath);
+      if (!await file.exists()) {
+        throw Exception("Target evidence file does not exist.");
+      }
 
-      final vaultBox = Hive.box('vault_box');
-      await vaultBox.add({
+      // Stream file bytes to calculate SHA-256 fingerprint safely
+      final digest = await sha256.bind(file.openRead()).first;
+      final hash = digest.toString();
+
+      final vaultBox = Hive.isBoxOpen('vault_box')
+          ? Hive.box('vault_box')
+          : await Hive.openBox('vault_box');
+
+      // Add local record to Hive
+      final entryIndex = await vaultBox.add({
         'path': filePath,
         'hash': hash,
         'timestamp': DateTime.now().toIso8601String(),
         'status': 'locally_secured',
+        'cid': null,
       });
 
       logger.i("Fingerprint Generated: $hash");
-      appStatus.value = "Evidence Secured & Fingerprinted.";
+      appStatus.value = "Evidence Secured locally. Uploading to IPFS...";
+
+      // Trigger automatic background upload to IPFS via Pinata
+      unawaited(_uploadToIpfsInBackground(filePath, entryIndex, vaultBox));
+
     } catch (e) {
       logger.e("Securing evidence failed: $e");
       appStatus.value = "Security Error: Hash Failed";
+    }
+  }
+
+  Future<void> _uploadToIpfsInBackground(
+      String filePath, int entryIndex, Box vaultBox) async {
+    try {
+      logger.i("🌐 Initiating automatic IPFS upload for recorded video: $filePath");
+
+      final cid = await PinataService.uploadToIPFS(filePath);
+
+      if (cid != null && cid.isNotEmpty) {
+        logger.i("🎉 AUTOMATIC IPFS UPLOAD SUCCESSFUL!");
+        logger.i("📌 IPFS CID: $cid");
+
+        // Update the item entry in Hive vault box with the newly generated IPFS CID
+        final Map<dynamic, dynamic> rawData = vaultBox.getAt(entryIndex) as Map;
+        final updatedData = Map<String, dynamic>.from(rawData);
+        updatedData['cid'] = cid;
+        updatedData['status'] = 'uploaded_to_ipfs';
+        await vaultBox.putAt(entryIndex, updatedData);
+
+        appStatus.value = "Evidence Secured & Uploaded to IPFS!";
+      } else {
+        logger.w("⚠️ Automatic IPFS upload failed. Evidence remains secured in local vault.");
+        appStatus.value = "Evidence Secured in JusticeChain Vault";
+      }
+    } catch (e) {
+      logger.e("❌ Error during automatic IPFS upload: $e");
     }
   }
 
@@ -273,7 +317,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
         final displayHash = fullHash.length > 15
             ? fullHash.substring(0, 15)
             : fullHash;
-        logger.d("Item $i: Hash: $displayHash... | Path: ${data['path']}");
+        final cid = data['cid'] ?? 'Pending/None';
+        logger.d("Item $i: Hash: $displayHash... | CID: $cid | Path: ${data['path']}");
       } else {
         logger.w("Item $i: Corrupted or null vault entry data.");
       }
@@ -447,7 +492,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // NEW: Guardian Pairing Controls Side-by-Side
+                // Guardian Pairing Controls Side-by-Side
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
