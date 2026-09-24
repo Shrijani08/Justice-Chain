@@ -9,7 +9,7 @@ class IdentityService {
 
   // Enforces hardware keystore on Android
   static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(),
   );
 
   static String? _cachedNodeId;
@@ -69,6 +69,41 @@ class IdentityService {
       );
       rethrow;
     }
+  }
+
+  /// Registers the user's name and PIN, and ensures keys are initialized.
+  static Future<void> registerNode({required String name, required String pin}) async {
+    try {
+      // 1. Hash the Vault PIN using SHA-256
+      final pinBytes = utf8.encode(pin);
+      final pinHash = sha256.convert(pinBytes).toString();
+
+      // 2. Persist name and PIN hash to secure storage
+      await _storage.write(key: 'node_name', value: name);
+      await _storage.write(key: 'node_pin_hash', value: pinHash);
+
+      // 3. Ensure Ed25519 keys are generated and stored
+      await initializeDevice();
+
+      developer.log(
+        'SUCCESS: Identity established for node -> $name',
+        name: 'JusticeChain.Identity',
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        'Failed to register node',
+        name: 'JusticeChain.Identity',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Checks if a node has been registered yet
+  static Future<bool> isRegistered() async {
+    final name = await _storage.read(key: 'node_name');
+    return name != null && name.isNotEmpty;
   }
 
   /// Retrieves the public Node ID to display on the screen
