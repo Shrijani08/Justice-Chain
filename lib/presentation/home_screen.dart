@@ -12,8 +12,8 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../core/app_services.dart';
 import '../core/emergency_controller.dart';
 import '../logic/safety_signals.dart';
-import 'guardian_pairing_screen.dart'; 
-import 'guardian_scanner_screen.dart'; 
+import 'guardian_pairing_screen.dart';
+import 'guardian_scanner_screen.dart';
 import 'package:justice_chain/core/pinata_service.dart';
 
 class MainSafetyScreen extends StatefulWidget {
@@ -26,38 +26,27 @@ class MainSafetyScreen extends StatefulWidget {
 class _MainSafetyScreenState extends State<MainSafetyScreen> {
   CameraController? _cameraController;
   bool _isProcessingSave = false;
-
-  // Create a cleanup variable for the background signal listener
   EffectCleanup? _distressEffectCleanup;
-
-  // Safely tracks the 45-second automatic cutoff timer
   Timer? _recordingTimeoutTimer;
 
   @override
   void initState() {
     super.initState();
     _initPermissions();
-    _setupAutomaticTrigger(); // Start listening for AI distress signals immediately
+    _setupAutomaticTrigger();
   }
 
-  // --- AUTOMATIC TRIGGER LOGIC ---
   void _setupAutomaticTrigger() {
-    // The 'effect' function automatically reruns whenever a signal inside it changes.
     _distressEffectCleanup = effect(() {
       final isDistressed = aiDistressDetected.value;
       final isReady = cameraReady.value;
       final recordingNow = isRecording.value;
 
-      // If AI detects distress, camera is initialized, and we aren't already recording -> TRIGGER!
       if (isDistressed && isReady && !recordingNow) {
         logger.w(
           "🔥 AUTOMATIC TRIGGER: Distress detected by AI! Starting camera recording.",
         );
-
-        // Consume the trigger signal instantly so it doesn't cause an endless loop when stopped later
         aiDistressDetected.value = false;
-
-        // Unawaited ensures we don't block the signal thread while the camera warms up
         unawaited(startEmergencyRecording());
       }
     });
@@ -65,15 +54,12 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
   @override
   void dispose() {
-    // Always cancel the timer to prevent memory leaks or crashes if the screen is closed
     _recordingTimeoutTimer?.cancel();
-    _distressEffectCleanup?.call(); // Kill the background listener when screen closes
+    _distressEffectCleanup?.call();
     unawaited(EmergencyController.shutdownMonitoring());
     _cameraController?.dispose();
     super.dispose();
   }
-
-  // --- PERMISSIONS & INITIALIZATION ---
 
   Future<void> _initPermissions() async {
     logger.i("Requesting Permissions...");
@@ -118,7 +104,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       for (final camera in cameras) {
         final controller = CameraController(
           camera,
-          ResolutionPreset.medium, // Medium preset prevents hardware bandwidth crashes
+          ResolutionPreset.medium,
           enableAudio: true,
         );
 
@@ -145,8 +131,6 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     }
   }
 
-  // --- RECORDING LOGIC ---
-
   Future<void> startEmergencyRecording() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       logger.e("Recording failed: Camera not initialized");
@@ -160,10 +144,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       appStatus.value = "RECORDING EVIDENCE...";
       logger.w("Emergency Recording Started!");
 
-      // Start the robust 45-second cutoff timer
-      _recordingTimeoutTimer?.cancel(); // Kill any stale timers first
+      _recordingTimeoutTimer?.cancel();
       _recordingTimeoutTimer = Timer(const Duration(seconds: 45), () {
-        // Safe execution: Only stop if the widget is still on-screen and it is actually still recording
         if (mounted && isRecording.value) {
           logger.w(
             "⏱️ AUTOMATIC TIMEOUT: 45 seconds reached. Saving captured evidence...",
@@ -183,11 +165,10 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     }
     if (_isProcessingSave) return;
 
-    // Instantly kill the timer if the user manually hits STOP. Prevents double-stop crashes.
     _recordingTimeoutTimer?.cancel();
     _recordingTimeoutTimer = null;
 
-    if (!mounted) return; // Prevent setState if app is closed while saving
+    if (!mounted) return;
     setState(() {
       _isProcessingSave = true;
     });
@@ -203,7 +184,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       }
 
       isRecording.value = false;
-      aiDistressDetected.value = false; // Double guard: ensuring clean state layout
+      aiDistressDetected.value = false;
 
       final directory = await getApplicationDocumentsDirectory();
       final vaultDir = Directory('${directory.path}/JusticeChain');
@@ -223,7 +204,6 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
       // Seal evidence and trigger background IPFS upload
       await _secureEvidence(savedFile.path);
-
     } catch (e) {
       logger.e("Failed to stop recording: $e");
       appStatus.value = "Recording Save Failed";
@@ -237,7 +217,6 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   }
 
   // --- SECURITY, CACHING & AUTOMATIC IPFS UPLOAD ---
-
   Future<void> _secureEvidence(String filePath) async {
     try {
       appStatus.value = "Sealing Evidence...";
@@ -269,7 +248,6 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
       // Trigger automatic background upload to IPFS via Pinata
       unawaited(_uploadToIpfsInBackground(filePath, entryIndex, vaultBox));
-
     } catch (e) {
       logger.e("Securing evidence failed: $e");
       appStatus.value = "Security Error: Hash Failed";
@@ -277,9 +255,14 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   }
 
   Future<void> _uploadToIpfsInBackground(
-      String filePath, int entryIndex, Box vaultBox) async {
+    String filePath,
+    int entryIndex,
+    Box vaultBox,
+  ) async {
     try {
-      logger.i("🌐 Initiating automatic IPFS upload for recorded video: $filePath");
+      logger.i(
+        "🌐 Initiating automatic IPFS upload for recorded video: $filePath",
+      );
 
       final cid = await PinataService.uploadToIPFS(filePath);
 
@@ -296,7 +279,9 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
         appStatus.value = "Evidence Secured & Uploaded to IPFS!";
       } else {
-        logger.w("⚠️ Automatic IPFS upload failed. Evidence remains secured in local vault.");
+        logger.w(
+          "⚠️ Automatic IPFS upload failed. Evidence remains secured in local vault.",
+        );
         appStatus.value = "Evidence Secured in JusticeChain Vault";
       }
     } catch (e) {
@@ -318,7 +303,9 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
             ? fullHash.substring(0, 15)
             : fullHash;
         final cid = data['cid'] ?? 'Pending/None';
-        logger.d("Item $i: Hash: $displayHash... | CID: $cid | Path: ${data['path']}");
+        logger.d(
+          "Item $i: Hash: $displayHash... | CID: $cid | Path: ${data['path']}",
+        );
       } else {
         logger.w("Item $i: Corrupted or null vault entry data.");
       }
@@ -381,8 +368,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                           isDistressDetected
                               ? Icons.warning_amber
                               : (isAiActive
-                                  ? Icons.hearing
-                                  : Icons.psychology_alt),
+                                    ? Icons.hearing
+                                    : Icons.psychology_alt),
                           color: isDistressDetected
                               ? Colors.red
                               : (isAiActive ? Colors.green : Colors.grey),
@@ -462,8 +449,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     _isProcessingSave
                         ? "SAVING TO VAULT..."
                         : (isRecordingActive
-                            ? "STOP RECORDING"
-                            : "START TEST RECORD"),
+                              ? "STOP RECORDING"
+                              : "START TEST RECORD"),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isRecordingActive
