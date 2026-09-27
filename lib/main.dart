@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'core/ai_service.dart';
 import 'core/identity_service.dart';
-
+import 'core/app_services.dart';
 import 'presentation/home_screen.dart';
 import 'presentation/registration_screen.dart';
 
@@ -15,6 +15,8 @@ void main() async {
   // Fixes the isolate crash
   WidgetsFlutterBinding.ensureInitialized();
 
+  await AppServices.init();
+  
   // Check if the user is already registered before loading the UI
   bool isRegistered = false;
   try {
