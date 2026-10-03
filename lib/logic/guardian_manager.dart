@@ -5,18 +5,23 @@ class GuardianManager {
   static final Box _box = Hive.box('vault_box');
   static const String _guardiansKey = 'trusted_guardians';
 
-  /// Saves a verified Guardian to the local Hive Vault
+  /// Saves a verified Guardian to the local Hive Vault.
+  /// [x25519PublicKey] is optional so a guardian paired before encryption
+  /// key sharing existed keeps working for the mesh whitelist; it just
+  /// can't receive wrapped evidence keys until it re-pairs.
   static Future<void> addGuardian({
     required String nodeId,
     required String publicKey,
     required String name,
+    String? x25519PublicKey,
   }) async {
     // Fetch existing map or create a new one if empty
     Map guardians = _box.get(_guardiansKey, defaultValue: {});
-    
+
     guardians[nodeId] = {
       'name': name,
       'public_key': publicKey,
+      'x25519_public_key': x25519PublicKey,
       'added_at': DateTime.now().toIso8601String(),
     };
 

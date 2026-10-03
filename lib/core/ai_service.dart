@@ -46,7 +46,16 @@ class AIService {
 
   static const String _modelAssetPath = 'assets/models/distress_model.tflite';
   static const List<String> _classes = ['distress', 'happy', 'normal'];
-  static const double distressThreshold = 0.70;
+  static const double distressThreshold = 0.80;
+
+  // A single noisy window (a shout, a loud TV, a slammed door) must not be
+  // enough to fire a recording and an upload on its own. Requiring 2 of the
+  // last 3 one-second windows to clear threshold means only a sustained
+  // pattern — not a single blip — triggers the automatic path. The victim's
+  // own SOS button (home_screen.dart) bypasses this entirely and never
+  // depends on the model being right.
+  static const int _consecutiveWindowSize = 3;
+  static const int _requiredConsecutivePasses = 2;
 
   static const int _sampleRate = 16000;
   static const int _windowSampleCount = 32000;
@@ -54,6 +63,7 @@ class AIService {
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final ListQueue<double> _rollingSamples = ListQueue<double>();
+  final ListQueue<bool> _recentWindowPasses = ListQueue<bool>();
 
   Interpreter? _interpreter;
   StreamSubscription<Uint8List>? _audioSubscription;
@@ -152,6 +162,10 @@ class AIService {
 
     _rollingSamples.clear();
     _samplesSinceLastInference = 0;
+    // A fresh listening session starts with a clean slate: a window that
+    // cleared threshold before the last recording must not count toward
+    // triggering the next one.
+    _recentWindowPasses.clear();
     _isMonitoring = true;
     aiActive.value = true;
     aiStatus.value = 'AI listening at 16 kHz';
@@ -183,6 +197,7 @@ class AIService {
 
     _rollingSamples.clear();
     _samplesSinceLastInference = 0;
+    _recentWindowPasses.clear();
     _isMonitoring = false;
     _isPreprocessing = false;
     aiActive.value = false;
@@ -224,6 +239,24 @@ class AIService {
     }
   }
 
+  /// Records whether the current window cleared the distress threshold and
+  /// returns whether that's now true for at least [_requiredConsecutivePasses]
+  /// of the last [_consecutiveWindowSize] windows.
+  bool _recordWindowPass(bool passed) {
+    _recentWindowPasses.addLast(passed);
+    while (_recentWindowPasses.length > _consecutiveWindowSize) {
+      _recentWindowPasses.removeFirst();
+    }
+    final passCount = _recentWindowPasses.where((p) => p).length;
+    return passCount >= _requiredConsecutivePasses;
+  }
+
+  @visibleForTesting
+  bool recordWindowPassForTest(bool passed) => _recordWindowPass(passed);
+
+  @visibleForTesting
+  void resetWindowHistoryForTest() => _recentWindowPasses.clear();
+
   List<double> _pcm16BytesToSamples(Uint8List bytes) {
     final byteData = ByteData.sublistView(bytes);
     final sampleCount = bytes.length ~/ 2;
@@ -247,6 +280,7 @@ class AIService {
         aiStatus.value = 'AI listening: environment quiet';
         aiPrediction.value = 'silence';
         aiConfidence.value = 0.0;
+        _recordWindowPass(false);
         return;
       }
 
@@ -257,13 +291,18 @@ class AIService {
       final percent = (prediction.confidence * 100).toStringAsFixed(0);
       aiStatus.value = 'AI prediction: ${prediction.label} ($percent%)';
 
-      // FIXED: Instant verification check. Fires event immediately if prediction matches and clears threshold
-      if (prediction.label.toLowerCase() == 'distress' &&
-          prediction.confidence >= distressThreshold) {
+      final windowPassed = prediction.label.toLowerCase() == 'distress' &&
+          prediction.confidence >= distressThreshold;
+      final confirmedByHistory = _recordWindowPass(windowPassed);
+
+      if (confirmedByHistory) {
         developer.log(
-          '🔥 INSTANT THRESHOLD PASSED: Distress confirmed ($percent%)',
+          '🔥 SUSTAINED DISTRESS CONFIRMED: $_requiredConsecutivePasses of last $_consecutiveWindowSize windows ($percent%)',
           name: 'JusticeChain.AI',
         );
+
+        // Require a fresh buildup before this can fire again.
+        _recentWindowPasses.clear();
 
         await _notifyDistressDetected(
           AIDistressEvent(

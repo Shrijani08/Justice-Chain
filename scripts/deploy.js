@@ -16,7 +16,7 @@ async function main() {
 
   console.log("🎉 JusticeLedger contract deployed successfully!");
   console.log("📍 Deployed Contract Address:", contractAddress);
-  console.log("💡 Save this address! You will need it for your Flutter web3 client.");
+  console.log(`💡 Paste this into .env: CONTRACT_ADDRESS=${contractAddress}`);
 }
 
 main().catch((error) => {

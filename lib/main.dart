@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'core/ai_service.dart';
 import 'core/identity_service.dart';
@@ -81,14 +82,18 @@ class JusticeChainApp extends StatelessWidget {
       ),
       home: isRegistered
           ? Scaffold(
-              // We wrap your Home Screen in a Scaffold just to inject our test button!
               body: const MainSafetyScreen(),
-              floatingActionButton: FloatingActionButton.extended(
-                onPressed: testPinataUpload,
-                icon: const Icon(Icons.cloud_upload),
-                label: const Text('Test IPFS'),
-                backgroundColor: Colors.blue,
-              ),
+              // Debug-only IPFS smoke test. Never ship this in a release
+              // build: it's an unauthenticated upload trigger with no
+              // relation to the emergency flow.
+              floatingActionButton: kDebugMode
+                  ? FloatingActionButton.extended(
+                      onPressed: testPinataUpload,
+                      icon: const Icon(Icons.cloud_upload),
+                      label: const Text('Test IPFS'),
+                      backgroundColor: Colors.blue,
+                    )
+                  : null,
             )
           : const RegistrationScreen(),
     );

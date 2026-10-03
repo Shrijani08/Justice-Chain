@@ -30,11 +30,12 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
         setState(() {
           _isProcessing = true; // Lock scanner
         });
-        
+
         final nodeId = data['node_id'];
         final publicKey = data['public_key'];
-        
-        _promptForName(nodeId, publicKey);
+        final x25519PublicKey = data['x25519_public_key'] as String?;
+
+        _promptForName(nodeId, publicKey, x25519PublicKey);
       }
     } catch (e) {
       // Ignore normal text QR codes
@@ -42,7 +43,11 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
     }
   }
 
-  Future<void> _promptForName(String nodeId, String publicKey) async {
+  Future<void> _promptForName(
+    String nodeId,
+    String publicKey,
+    String? x25519PublicKey,
+  ) async {
     String guardianName = '';
     
     await showDialog(
@@ -82,6 +87,7 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
                   nodeId: nodeId,
                   publicKey: publicKey,
                   name: guardianName.trim(),
+                  x25519PublicKey: x25519PublicKey,
                 );
                 
                 if (mounted) {
