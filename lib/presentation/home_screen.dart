@@ -1,20 +1,19 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:camera/camera.dart';
-import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import '../core/app_services.dart';
 import '../core/emergency_controller.dart';
+import '../core/evidence_vault_service.dart';
 import '../logic/safety_signals.dart';
+import 'evidence_viewer_screen.dart';
 import 'guardian_pairing_screen.dart';
 import 'guardian_scanner_screen.dart';
-import 'package:justice_chain/core/pinata_service.dart';
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -27,7 +26,6 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   CameraController? _cameraController;
   bool _isProcessingSave = false;
   EffectCleanup? _distressEffectCleanup;
-  Timer? _recordingTimeoutTimer;
 
   @override
   void initState() {
@@ -54,7 +52,6 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
   @override
   void dispose() {
-    _recordingTimeoutTimer?.cancel();
     _distressEffectCleanup?.call();
     unawaited(EmergencyController.shutdownMonitoring());
     _cameraController?.dispose();
@@ -139,25 +136,21 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     if (isRecording.value) return;
 
     try {
+      // EmergencyController owns both the hardware recording call and the
+      // 45-second failsafe timer, so the failsafe keeps running even if
+      // this screen is disposed or the device screen locks mid-recording.
       await EmergencyController.startRecording();
       isRecording.value = true;
       appStatus.value = "RECORDING EVIDENCE...";
       logger.w("Emergency Recording Started!");
-
-      _recordingTimeoutTimer?.cancel();
-      _recordingTimeoutTimer = Timer(const Duration(seconds: 45), () {
-        if (mounted && isRecording.value) {
-          logger.w(
-            "⏱️ AUTOMATIC TIMEOUT: 45 seconds reached. Saving captured evidence...",
-          );
-          stopEmergencyRecording();
-        }
-      });
     } catch (e) {
       logger.e("Failed to start recording: $e");
     }
   }
 
+  /// Manual "STOP RECORDING" button path. The automatic 45-second timeout
+  /// path runs independently through EmergencyController and
+  /// EvidenceVaultService, with no dependency on this screen being mounted.
   Future<void> stopEmergencyRecording() async {
     if (_cameraController == null ||
         !_cameraController!.value.isRecordingVideo) {
@@ -165,127 +158,32 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     }
     if (_isProcessingSave) return;
 
-    _recordingTimeoutTimer?.cancel();
-    _recordingTimeoutTimer = null;
-
-    if (!mounted) return;
-    setState(() {
+    if (mounted) {
+      setState(() {
+        _isProcessingSave = true;
+      });
+    } else {
       _isProcessingSave = true;
-    });
+    }
 
     try {
       final tempVideo = await EmergencyController.stopRecording();
       if (tempVideo == null) {
-        if (!mounted) return;
-        setState(() {
-          _isProcessingSave = false;
-        });
         return;
       }
 
       isRecording.value = false;
       aiDistressDetected.value = false;
 
-      final directory = await getApplicationDocumentsDirectory();
-      final vaultDir = Directory('${directory.path}/JusticeChain');
-
-      if (!await vaultDir.exists()) {
-        await vaultDir.create(recursive: true);
-      }
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final newPath = '${vaultDir.path}/evidence_$timestamp.mp4';
-
-      final savedFile = await File(tempVideo.path).copy(newPath);
-      await File(tempVideo.path).delete();
-
-      logger.i("Evidence Saved Permanently:");
-      logger.i(savedFile.path);
-
-      // Seal evidence and trigger background IPFS upload
-      await _secureEvidence(savedFile.path);
+      await EvidenceVaultService.sealAndUpload(tempVideo.path as String);
     } catch (e) {
       logger.e("Failed to stop recording: $e");
       appStatus.value = "Recording Save Failed";
     } finally {
+      _isProcessingSave = false;
       if (mounted) {
-        setState(() {
-          _isProcessingSave = false;
-        });
+        setState(() {});
       }
-    }
-  }
-
-  // --- SECURITY, CACHING & AUTOMATIC IPFS UPLOAD ---
-  Future<void> _secureEvidence(String filePath) async {
-    try {
-      appStatus.value = "Sealing Evidence...";
-
-      final file = File(filePath);
-      if (!await file.exists()) {
-        throw Exception("Target evidence file does not exist.");
-      }
-
-      // Stream file bytes to calculate SHA-256 fingerprint safely
-      final digest = await sha256.bind(file.openRead()).first;
-      final hash = digest.toString();
-
-      final vaultBox = Hive.isBoxOpen('vault_box')
-          ? Hive.box('vault_box')
-          : await Hive.openBox('vault_box');
-
-      // Add local record to Hive
-      final entryIndex = await vaultBox.add({
-        'path': filePath,
-        'hash': hash,
-        'timestamp': DateTime.now().toIso8601String(),
-        'status': 'locally_secured',
-        'cid': null,
-      });
-
-      logger.i("Fingerprint Generated: $hash");
-      appStatus.value = "Evidence Secured locally. Uploading to IPFS...";
-
-      // Trigger automatic background upload to IPFS via Pinata
-      unawaited(_uploadToIpfsInBackground(filePath, entryIndex, vaultBox));
-    } catch (e) {
-      logger.e("Securing evidence failed: $e");
-      appStatus.value = "Security Error: Hash Failed";
-    }
-  }
-
-  Future<void> _uploadToIpfsInBackground(
-    String filePath,
-    int entryIndex,
-    Box vaultBox,
-  ) async {
-    try {
-      logger.i(
-        "🌐 Initiating automatic IPFS upload for recorded video: $filePath",
-      );
-
-      final cid = await PinataService.uploadToIPFS(filePath);
-
-      if (cid != null && cid.isNotEmpty) {
-        logger.i("🎉 AUTOMATIC IPFS UPLOAD SUCCESSFUL!");
-        logger.i("📌 IPFS CID: $cid");
-
-        // Update the item entry in Hive vault box with the newly generated IPFS CID
-        final Map<dynamic, dynamic> rawData = vaultBox.getAt(entryIndex) as Map;
-        final updatedData = Map<String, dynamic>.from(rawData);
-        updatedData['cid'] = cid;
-        updatedData['status'] = 'uploaded_to_ipfs';
-        await vaultBox.putAt(entryIndex, updatedData);
-
-        appStatus.value = "Evidence Secured & Uploaded to IPFS!";
-      } else {
-        logger.w(
-          "⚠️ Automatic IPFS upload failed. Evidence remains secured in local vault.",
-        );
-        appStatus.value = "Evidence Secured in JusticeChain Vault";
-      }
-    } catch (e) {
-      logger.e("❌ Error during automatic IPFS upload: $e");
     }
   }
 
@@ -293,23 +191,24 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
   void _debugPrintVault() {
     final vaultBox = Hive.box('vault_box');
-    logger.i("=== MANUAL VAULT CHECK (${vaultBox.length} items) ===");
+    final entries = vaultBox.toMap();
+    logger.i("=== MANUAL VAULT CHECK (${entries.length} items) ===");
 
-    for (var i = 0; i < vaultBox.length; i++) {
-      final data = vaultBox.getAt(i);
-      if (data != null && data['hash'] != null) {
-        final fullHash = data['hash'].toString();
+    entries.forEach((key, data) {
+      // Evidence records are keyed by content hash and carry a 'status'
+      // field; other box entries (e.g. the trusted-guardians map) are not
+      // evidence records and are skipped here rather than misreported.
+      if (data is Map && data['status'] != null) {
+        final fullHash = (data['hash'] ?? key).toString();
         final displayHash = fullHash.length > 15
             ? fullHash.substring(0, 15)
             : fullHash;
         final cid = data['cid'] ?? 'Pending/None';
         logger.d(
-          "Item $i: Hash: $displayHash... | CID: $cid | Path: ${data['path']}",
+          "Key $key: Hash: $displayHash... | CID: $cid | Path: ${data['path']}",
         );
-      } else {
-        logger.w("Item $i: Corrupted or null vault entry data.");
       }
-    }
+    });
   }
 
   @override
@@ -434,6 +333,10 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
               ),
               const SizedBox(height: 36),
               if (isReady) ...[
+                // The manual SOS path: it calls startEmergencyRecording()
+                // directly, bypassing the AI model and its 2-of-3 confirmation
+                // window entirely. A victim who can act must never depend on
+                // the model being right or fast enough.
                 ElevatedButton.icon(
                   onPressed: _isProcessingSave
                       ? null
@@ -450,7 +353,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                         ? "SAVING TO VAULT..."
                         : (isRecordingActive
                               ? "STOP RECORDING"
-                              : "START TEST RECORD"),
+                              : "SOS — START RECORDING"),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isRecordingActive
@@ -460,23 +363,29 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     minimumSize: const Size(220, 60),
                   ),
                 ),
-                const SizedBox(height: 20),
-                OutlinedButton.icon(
-                  onPressed: _isProcessingSave || isRecordingActive
-                      ? null
-                      : () async {
-                          logger.w("Demo AI distress trigger pressed.");
-                          await EmergencyController.simulateAIDistressDetection();
-                        },
-                  icon: const Icon(Icons.warning_amber),
-                  label: const Text("Debug: Simulate AI Distress"),
-                ),
-                const SizedBox(height: 12),
-                TextButton.icon(
-                  onPressed: _debugPrintVault,
-                  icon: const Icon(Icons.storage),
-                  label: const Text("Debug: Print Vault Contents"),
-                ),
+                // Debug-only affordances: a stray tap on these in the field
+                // could fire a false emergency upload, and they advertise
+                // exactly how the app works to anyone holding the phone, so
+                // they must never ship in a release build.
+                if (kDebugMode) ...[
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    onPressed: _isProcessingSave || isRecordingActive
+                        ? null
+                        : () async {
+                            logger.w("Demo AI distress trigger pressed.");
+                            await EmergencyController.simulateAIDistressDetection();
+                          },
+                    icon: const Icon(Icons.warning_amber),
+                    label: const Text("Debug: Simulate AI Distress"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    onPressed: _debugPrintVault,
+                    icon: const Icon(Icons.storage),
+                    label: const Text("Debug: Print Vault Contents"),
+                  ),
+                ],
                 const SizedBox(height: 12),
 
                 // Guardian Pairing Controls Side-by-Side
@@ -513,6 +422,19 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                       label: const Text('Scan QR'),
                     ),
                   ],
+                ),
+                const SizedBox(height: 12),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const EvidenceViewerScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.video_library),
+                  label: const Text('My Evidence'),
                 ),
               ] else ...[
                 ElevatedButton.icon(

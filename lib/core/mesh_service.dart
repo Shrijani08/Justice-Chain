@@ -5,6 +5,7 @@ import 'package:nearby_connections/nearby_connections.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:developer' as developer;
 import '../logic/guardian_manager.dart';
+import 'identity_service.dart';
 
 class MeshService {
   // P2P_CLUSTER allows multiple devices to connect to each other in a mesh topology
@@ -18,10 +19,11 @@ class MeshService {
   static final Map<int, String> _incomingHashes = {};
   static final Map<int, String> _tempFilePaths = {};
 
-  /// Gets the local device's Secure Node ID to broadcast to others
+  /// Gets the local device's Secure Node ID to broadcast to others.
+  /// This is the same hardware-backed identity shown on the pairing QR code,
+  /// not a value cached in Hive.
   static Future<String> _getLocalNodeId() async {
-    final vaultBox = Hive.box('vault_box');
-    return vaultBox.get('node_id', defaultValue: 'UNKNOWN_NODE');
+    return IdentityService.getMyNodeId();
   }
 
   // ==========================================
@@ -250,9 +252,11 @@ class MeshService {
       final newPath = '$parentDir/$fileName';
       final permanentFile = await tempFile.rename(newPath);
 
-      // 3. Register into Guardian's Hive Vault
+      // 3. Register into Guardian's Hive Vault, keyed by content hash so the
+      // record can be found and updated later without relying on insertion
+      // order (positional Hive indices shift whenever any entry is removed).
       final vaultBox = Hive.box('vault_box');
-      await vaultBox.add({
+      await vaultBox.put(actualHash, {
         'path': permanentFile.path,
         'hash': actualHash,
         'status': 'relay_received',

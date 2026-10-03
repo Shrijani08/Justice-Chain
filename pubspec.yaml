@@ -46,6 +46,9 @@ dependencies:
 
   http: ^1.6.0
   flutter_dotenv: ^6.0.1
+  video_player: ^2.11.1
+  web3dart: ^3.0.3
+  wallet: ^0.0.18
 
   # NEW: Offline P2P Networking
 

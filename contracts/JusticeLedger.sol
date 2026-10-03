@@ -3,79 +3,135 @@ pragma solidity ^0.8.20;
 
 /**
  * @title JusticeLedger
- * @dev Manages immutable chain-of-custody records for digital distress evidence.
+ * @dev Immutable chain-of-custody anchors for encrypted distress evidence.
+ *
+ * The chain never sees video, keys, or anything identifying a victim by
+ * name — only a manifest hash, an IPFS CID, and the capturing device's
+ * self-authenticating signature. Anyone (a guardian, or a relayer) can
+ * submit a record on a device's behalf without being able to forge one:
+ * authorship is tied to whichever address the signature recovers to, not
+ * to who paid gas.
  */
 contract JusticeLedger {
-
-    // Structure representing an individual evidence log
-    struct Evidence {
-        string fileHash;     // SHA-256 Fingerprint
-        string ipfsCid;      // IPFS Content Identifier
-        uint256 timestamp;   // Blockchain Timestamp
-        string guardianId;  // Relay Node ID or "DIRECT"
+    struct EvidenceRecord {
+        bool found;
+        string cid;
+        uint64 capturedAt;
+        uint64 anchoredAt;
+        bytes32 nodeId;
+        address signer;
     }
 
-    // Storage Mapping: Victim ID -> Array of Evidence Records
-    mapping(string => Evidence[]) private registry;
+    // manifestHash -> record
+    mapping(bytes32 => EvidenceRecord) private records;
 
-    // Event emitted whenever new evidence is successfully logged
-    event EvidenceRecorded(
-        string indexed victimId,
-        string fileHash,
-        string ipfsCid,
-        uint256 timestamp,
-        string guardianId
+    // nodeId -> every manifestHash anchored by that node, in submission order
+    mapping(bytes32 => bytes32[]) private history;
+
+    event EvidenceAnchored(
+        bytes32 indexed manifestHash,
+        string cid,
+        uint64 capturedAt,
+        bytes32 indexed nodeId,
+        address indexed signer
     );
 
     /**
-     * @notice Seals evidence onto the blockchain.
-     * @param _victimId Unique cryptographic identity of the victim.
-     * @param _fileHash SHA-256 fingerprint of the recording.
-     * @param _ipfsCid Pinata IPFS Content ID.
-     * @param _guardianId Secure Node ID if relayed via Mesh, otherwise "DIRECT".
+     * @notice Anchors a manifest hash on-chain, self-authenticated by the
+     * capturing device's signature rather than by who submits it.
+     * @param manifestHash SHA-256 fingerprint of the evidence manifest.
+     * @param cid Pinata/IPFS Content ID of the encrypted clip.
+     * @param capturedAt Device-clock capture time (unix seconds). The
+     * block's own timestamp is also recorded as anchoredAt, so a wrong or
+     * backdated device clock is bounded, not trusted blindly.
+     * @param nodeId The capturing device's node ID.
+     * @param sig A 65-byte (r, s, v) signature over the EIP-191 "personal
+     * sign" prefixed manifestHash, made with the device's anchoring key.
      */
-    function recordEvidence(
-        string memory _victimId,
-        string memory _fileHash,
-        string memory _ipfsCid,
-        string memory _guardianId
-    ) public {
-        require(bytes(_victimId).length > 0, "Victim ID cannot be empty");
-        require(bytes(_fileHash).length > 0, "File Hash cannot be empty");
-        require(bytes(_ipfsCid).length > 0, "IPFS CID cannot be empty");
+    function storeEvidence(
+        bytes32 manifestHash,
+        string calldata cid,
+        uint64 capturedAt,
+        bytes32 nodeId,
+        bytes calldata sig
+    ) external {
+        require(!records[manifestHash].found, "Evidence already stored");
+        require(bytes(cid).length > 0, "CID cannot be empty");
 
-        Evidence memory newEvidence = Evidence({
-            fileHash: _fileHash,
-            ipfsCid: _ipfsCid,
-            timestamp: block.timestamp,
-            guardianId: _guardianId
+        address signer = _recoverSigner(manifestHash, sig);
+
+        records[manifestHash] = EvidenceRecord({
+            found: true,
+            cid: cid,
+            capturedAt: capturedAt,
+            anchoredAt: uint64(block.timestamp),
+            nodeId: nodeId,
+            signer: signer
         });
 
-        registry[_victimId].push(newEvidence);
+        history[nodeId].push(manifestHash);
 
-        emit EvidenceRecorded(
-            _victimId,
-            _fileHash,
-            _ipfsCid,
-            block.timestamp,
-            _guardianId
+        emit EvidenceAnchored(manifestHash, cid, capturedAt, nodeId, signer);
+    }
+
+    /**
+     * @notice Looks up a record by its manifest hash — the starting point
+     * a court or guardian actually has (a file), not a victim ID.
+     */
+    function verifyEvidence(bytes32 manifestHash)
+        external
+        view
+        returns (
+            bool found,
+            string memory cid,
+            uint64 capturedAt,
+            uint64 anchoredAt,
+            bytes32 nodeId,
+            address signer
+        )
+    {
+        EvidenceRecord storage record = records[manifestHash];
+        return (
+            record.found,
+            record.cid,
+            record.capturedAt,
+            record.anchoredAt,
+            record.nodeId,
+            record.signer
         );
     }
 
     /**
-     * @notice Retrieves all evidence records associated with a specific Victim ID.
-     * @param _victimId The cryptographic ID to look up.
-     * @return Array of Evidence structs associated with the victim.
+     * @notice Every manifest hash anchored by a given device, in order.
      */
-    function getEvidence(string memory _victimId) public view returns (Evidence[] memory) {
-        return registry[_victimId];
+    function getEvidenceHistory(bytes32 nodeId)
+        external
+        view
+        returns (bytes32[] memory)
+    {
+        return history[nodeId];
     }
 
-    /**
-     * @notice Gets total number of evidence logs for a Victim ID.
-     * @param _victimId The cryptographic ID to count records for.
-     */
-    function getEvidenceCount(string memory _victimId) public view returns (uint256) {
-        return registry[_victimId].length;
+    function _recoverSigner(bytes32 manifestHash, bytes calldata sig)
+        private
+        pure
+        returns (address)
+    {
+        require(sig.length == 65, "Invalid signature length");
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(sig.offset)
+            s := calldataload(add(sig.offset, 32))
+            v := byte(0, calldataload(add(sig.offset, 64)))
+        }
+
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", manifestHash)
+        );
+
+        return ecrecover(ethSignedHash, v, r, s);
     }
 }
