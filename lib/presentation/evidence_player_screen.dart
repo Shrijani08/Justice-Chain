@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:developer' as developer;
 
-import '../core/evidence_encryptor.dart';
+import '../core/guardian_evidence_service.dart';
 
 /// Decrypts one evidence record into a temporary plaintext file just long
 /// enough to play it, then deletes that file the moment this screen closes.
@@ -14,14 +15,18 @@ import '../core/evidence_encryptor.dart';
 class EvidencePlayerScreen extends StatefulWidget {
   const EvidencePlayerScreen({
     super.key,
-    required this.cipherPath,
-    required this.wrappedKeyB64,
     required this.label,
+    required this.loadPlaintext,
+    this.checks,
+    this.anchorSummary,
   });
 
-  final String cipherPath;
-  final String wrappedKeyB64;
   final String label;
+  final Future<Uint8List> Function() loadPlaintext;
+
+  /// Shown above the video when present (guardian verification results).
+  final List<VerificationCheck>? checks;
+  final String? anchorSummary;
 
   @override
   State<EvidencePlayerScreen> createState() => _EvidencePlayerScreenState();
@@ -40,10 +45,7 @@ class _EvidencePlayerScreenState extends State<EvidencePlayerScreen> {
 
   Future<void> _decryptAndLoad() async {
     try {
-      final plaintextBytes = await EvidenceEncryptor.decryptFile(
-        widget.cipherPath,
-        widget.wrappedKeyB64,
-      );
+      final plaintextBytes = await widget.loadPlaintext();
 
       final tempDir = await getTemporaryDirectory();
       final tempPath =
@@ -112,7 +114,14 @@ class _EvidencePlayerScreenState extends State<EvidencePlayerScreen> {
         foregroundColor: Colors.white,
       ),
       backgroundColor: Colors.black,
-      body: Center(
+      body: Column(
+        children: [
+          if (widget.checks != null) _VerificationPanel(
+            checks: widget.checks!,
+            anchorSummary: widget.anchorSummary,
+          ),
+          Expanded(
+            child: Center(
         child: _error != null
             ? Text(_error!, style: const TextStyle(color: Colors.white))
             : (controller == null || !controller.value.isInitialized)
@@ -127,6 +136,9 @@ class _EvidencePlayerScreenState extends State<EvidencePlayerScreen> {
                   ],
                 ),
               ),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: controller == null || !controller.value.isInitialized
           ? null
@@ -142,6 +154,62 @@ class _EvidencePlayerScreenState extends State<EvidencePlayerScreen> {
                 controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
               ),
             ),
+    );
+  }
+}
+
+class _VerificationPanel extends StatelessWidget {
+  const _VerificationPanel({required this.checks, this.anchorSummary});
+
+  final List<VerificationCheck> checks;
+  final String? anchorSummary;
+
+  @override
+  Widget build(BuildContext context) {
+    final allPassed = checks.every((c) => c.passed == true);
+    return Container(
+      width: double.infinity,
+      color: allPassed ? Colors.green.shade900 : Colors.orange.shade900,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            anchorSummary ?? (allPassed ? 'Verified' : 'Not fully verified'),
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          for (final check in checks)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    check.passed == true
+                        ? Icons.check_circle
+                        : check.passed == false
+                            ? Icons.cancel
+                            : Icons.help,
+                    size: 16,
+                    color: check.passed == true
+                        ? Colors.greenAccent
+                        : check.passed == false
+                            ? Colors.redAccent
+                            : Colors.amberAccent,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${check.label} — ${check.detail}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

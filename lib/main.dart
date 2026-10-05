@@ -31,6 +31,7 @@ void main() async {
   // is initialized in home_screen.dart.
   await AIService.instance.initModel();
   await dotenv.load(fileName: ".env");
+  await AppServices.startBackgroundWork();
 
   runApp(JusticeChainApp(isRegistered: isRegistered));
 }
@@ -55,14 +56,11 @@ class JusticeChainApp extends StatelessWidget {
 
       print('2. Sending to IPFS...');
       // Call the service we just built!
-      String? cid = await PinataService.uploadToIPFS(testFilePath);
-
-      if (cid != null) {
-        print('🎉 SUCCESS! Your file is on the decentralized web.');
-        print('🌐 View it here: https://ipfs.io/ipfs/$cid');
-      } else {
-        print('❌ Upload failed. Check your Pinata keys.');
-      }
+      final cid = await PinataService.uploadToIPFS(testFilePath);
+      print('🎉 SUCCESS! Your file is on the decentralized web.');
+      print('🌐 View it here: https://ipfs.io/ipfs/$cid');
+    } on PinataUploadException catch (e) {
+      print('❌ Upload failed: $e');
     } catch (e) {
       print('❌ Error during test: $e');
     }

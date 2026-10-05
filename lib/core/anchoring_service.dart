@@ -52,6 +52,18 @@ const String _justiceLedgerAbi = '''
     ],
     "stateMutability": "view",
     "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "internalType": "bytes32", "name": "manifestHash", "type": "bytes32"},
+      {"indexed": false, "internalType": "string", "name": "cid", "type": "string"},
+      {"indexed": false, "internalType": "uint64", "name": "capturedAt", "type": "uint64"},
+      {"indexed": true, "internalType": "bytes32", "name": "nodeId", "type": "bytes32"},
+      {"indexed": true, "internalType": "address", "name": "signer", "type": "address"}
+    ],
+    "name": "EvidenceAnchored",
+    "type": "event"
   }
 ]
 ''';
@@ -125,21 +137,31 @@ class AnchoringService {
   /// additive proof, not a condition for evidence being safely uploaded,
   /// so a failure here must never undo or block the IPFS upload that
   /// already succeeded.
+  /// This device's anchoring signature over [manifestHashHex], hex-encoded.
+  /// Carried in relay manifests so a guardian can anchor on the victim's
+  /// behalf — the contract recovers the victim as signer whoever submits.
+  static Future<String> signAnchor(String manifestHashHex) async {
+    final anchoringKey = await IdentityService.getAnchoringCredentials();
+    return bytesToHex(
+      anchoringKey.signPersonalMessageToUint8List(hexToBytes(manifestHashHex)),
+    );
+  }
+
   static Future<String?> recordAnchor({
     required String manifestHashHex,
     required String cid,
     required DateTime capturedAt,
     required String nodeId,
+    String? signatureHex,
   }) async {
     try {
       final client = _getClient();
       final contract = _getContract();
       final submitter = _getSubmitterCredentials();
-      final anchoringKey = await IdentityService.getAnchoringCredentials();
 
       final manifestHashBytes = hexToBytes(manifestHashHex);
-      final signature = anchoringKey.signPersonalMessageToUint8List(
-        manifestHashBytes,
+      final signature = hexToBytes(
+        signatureHex ?? await signAnchor(manifestHashHex),
       );
 
       final function = contract.function('storeEvidence');
@@ -172,6 +194,45 @@ class AnchoringService {
     } catch (e, stackTrace) {
       developer.log(
         'Anchoring failed (evidence remains safely uploaded regardless)',
+        error: e,
+        stackTrace: stackTrace,
+        name: 'JusticeChain.Anchor',
+      );
+      return null;
+    }
+  }
+
+  /// Finds the block that recorded [manifestHashHex]'s anchor, via its
+  /// EvidenceAnchored event log. Null if not found or chain unreachable.
+  static Future<({int blockNumber, DateTime blockTime})?> findAnchorBlock(
+    String manifestHashHex,
+  ) async {
+    try {
+      final client = _getClient();
+      final contract = _getContract();
+      final event = contract.event('EvidenceAnchored');
+
+      final logs = await client.getLogs(
+        FilterOptions(
+          address: contract.address,
+          fromBlock: const BlockNum.genesis(),
+          toBlock: const BlockNum.current(),
+          topics: [
+            [bytesToHex(event.signature, padToEvenLength: true, include0x: true)],
+            [bytesToHex(hexToBytes(manifestHashHex), padToEvenLength: true, include0x: true)],
+          ],
+        ),
+      );
+      final blockNumber = logs.isEmpty ? null : logs.first.blockNum;
+      if (blockNumber == null) return null;
+
+      final block = await client.getBlockInformation(
+        blockNumber: BlockNum.exact(blockNumber).toBlockParam(),
+      );
+      return (blockNumber: blockNumber, blockTime: block.timestamp.toLocal());
+    } catch (e, stackTrace) {
+      developer.log(
+        'Anchor block lookup failed',
         error: e,
         stackTrace: stackTrace,
         name: 'JusticeChain.Anchor',

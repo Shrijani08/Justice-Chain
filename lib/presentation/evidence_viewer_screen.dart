@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../core/evidence_encryptor.dart';
 import 'evidence_player_screen.dart';
 
 /// Lists this device's own encrypted evidence records and lets the user
@@ -67,8 +68,10 @@ class EvidenceViewerScreen extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                               builder: (context) => EvidencePlayerScreen(
-                                cipherPath: cipherPath,
-                                wrappedKeyB64: wrappedKey,
+                                loadPlaintext: () => EvidenceEncryptor.decryptFile(
+                                  cipherPath,
+                                  wrappedKey,
+                                ),
                                 label: hash.length > 12
                                     ? hash.substring(0, 12)
                                     : hash,
