@@ -5,7 +5,7 @@ Branch: `local-blockchain--code` (from `ipfs-changes`). Follows the 02-10-2026 l
 ## Status key
 
 - **Committed and pushed**: in commit `2507c1dc` on `origin/local-blockchain--code`.
-- **Written, not tested, not committed**: code exists in the working tree only. The analyzer / editor shows no compile errors, but no tests were run and nothing was tried on a device.
+- **Written, not tested**: sections 2 to 5 were later committed and pushed in `89a71598` (see section 6). The full unit/widget suite passes, but these features have no dedicated tests yet and nothing was tried on a device.
 
 ---
 
@@ -15,7 +15,7 @@ Branch: `local-blockchain--code` (from `ipfs-changes`). Follows the 02-10-2026 l
 - Checked first that `.env` is gitignored and that no keys are hardcoded (Pinata, Hardhat and device keys all come from `.env` or secure storage).
 - PR #3 was opened by the user against `main`. It is not merged.
 - Open item: `DOCS/Justice-Chain-Sentinel-Technical-Handoff.pdf` was flagged for line-ending conversion. Check it still opens on GitHub; if not, add a `.gitattributes` marking PDFs as binary.
-- Everything below this line is **not committed**.
+- Sections 2 to 5 below were committed and pushed later in `89a71598` (see section 6).
 
 ## 2. Pinata upload timeout and clear errors (written, partly tested)
 
@@ -69,6 +69,21 @@ Fixes the upload hang from the 02-10 log (a network silently dropping large POST
 - `lib/presentation/home_screen.dart`: new **Guardian Evidence** button.
 - Gaps: no victim-approval or 72-hour release rule yet (two guardians agreeing is enough); guardians must also be paired with each other to forward shares; the victim's "My Evidence" still plays the local file.
 
+## 6. Commit, push and test run (06-10-2026)
+
+- Committed and pushed sections 2 to 5 as `89a71598` on `origin/local-blockchain--code` (21 files: 15 modified, 6 new, including this log). Checked the diff for hardcoded keys first; none found.
+- Ran `flutter test` after the push: **37 tests, all passed**.
+
+| Test file | Covers |
+| --- | --- |
+| `ai_trigger_debounce_test.dart` | Distress-window debounce (6 tests) |
+| `evidence_encryptor_test.dart` | Encrypt-and-seal, plaintext hash, key unwrap, signature, tamper rejection, 2-of-3 guardian quorum decrypt |
+| `identity_service_test.dart` | Argon2id PIN hashing, per-registration salt, PIN verify |
+| `pinata_service_test.dart` | Upload timeout and `PinataUploadException` errors |
+| `widget_test.dart` | Unregistered app shows registration screen |
+
+- Still untested: no unit tests for `shamir.dart`, the outbox, mesh relay or guardian verification, and no device testing. `flutter analyze` was not run.
+
 ## Known cross-cutting gaps
 
 - Local `.enc` files are never deleted after upload and anchor (blueprint wants deletion once both are confirmed).
@@ -79,15 +94,15 @@ Fixes the upload hang from the 02-10 log (a network silently dropping large POST
 
 | Item | Status |
 | --- | --- |
-| Tests for Phases 2 (rest), 4, 5; device checks for all of them | Not run |
-| Commit and push of sections 2 to 5 | Not done |
+| Full `flutter test` suite | Passed, 37/37 (06-10-2026) |
+| Tests for Phases 2 (rest), 4, 5; device checks for all of them | Not written / not run |
+| Commit and push of sections 2 to 5 | Done (`89a71598`) |
 | Phase 6: 15 s segments, Android foreground service | Not started |
 | Phase 7: public testnet (Polygon Amoy) | Not started |
 | Phase 8: Hyperledger Fabric | Parked |
 
 ## Suggested next steps
 
-1. Run `flutter analyze` and `flutter test`, and add unit tests for `shamir.dart` and the outbox.
-2. Commit and push sections 2 to 5.
-3. Two-phone test: pair both ways, airplane mode with Bluetooth and Wi-Fi on, record, confirm the relay, then go online and confirm IPFS and on-chain.
-4. Then Phase 6.
+1. Run `flutter analyze`, and add unit tests for `shamir.dart` and the outbox (`flutter test` already passes).
+2. Two-phone test: pair both ways, airplane mode with Bluetooth and Wi-Fi on, record, confirm the relay, then go online and confirm IPFS and on-chain.
+3. Then Phase 6.
