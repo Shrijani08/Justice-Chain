@@ -6,10 +6,11 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 
 import 'identity_service.dart';
+import 'shamir.dart';
 
-/// A guardian's node ID and X25519 public key, as needed to wrap an
-/// incident key for them. Guardians paired before X25519 sharing existed
-/// have no usable key and should be filtered out before calling
+/// A guardian's node ID and X25519 public key, as needed to wrap a key
+/// share for them. Guardians paired before X25519 sharing existed have no
+/// usable key and should be filtered out before calling
 /// [EvidenceEncryptor.encryptAndSeal].
 typedef GuardianKeyInfo = ({String nodeId, String x25519PublicKeyB64});
 
@@ -20,7 +21,8 @@ class EncryptedEvidenceResult {
     required this.wrappedKeyB64,
     required this.signatureB64,
     required this.encryptedAt,
-    required this.guardianWrappedKeys,
+    required this.guardianShares,
+    required this.nextShareX,
   });
 
   /// Path to the on-disk ciphertext (nonce + MAC + ciphertext).
@@ -41,10 +43,14 @@ class EncryptedEvidenceResult {
 
   final DateTime encryptedAt;
 
-  /// The same incident key, wrapped separately for each guardian passed to
-  /// [EvidenceEncryptor.encryptAndSeal], keyed by guardian node ID. Empty
-  /// when no guardians (with a usable key) were paired at encryption time.
-  final Map<String, String> guardianWrappedKeys;
+  /// One Shamir share of the incident key per guardian, each sealed to that
+  /// guardian's X25519 key, keyed by guardian node ID. No single share can
+  /// decrypt; [EvidenceEncryptor.guardianQuorum] of them are needed.
+  final Map<String, String> guardianShares;
+
+  /// The share index to give the next guardian issued a share for this
+  /// incident (indices must never repeat).
+  final int nextShareX;
 }
 
 /// Encrypts a freshly recorded clip with a random per-incident AES-256-GCM
@@ -84,10 +90,12 @@ class EvidenceEncryptor {
       utf8.encode(plaintextHash),
     );
 
-    final guardianWrappedKeys = <String, String>{};
+    final guardianShares = <String, String>{};
+    var nextShareX = 1;
     for (final guardian in guardians) {
-      guardianWrappedKeys[guardian.nodeId] = await _wrapIncidentKeyForGuardian(
+      guardianShares[guardian.nodeId] = await _sealShareForGuardian(
         incidentKey,
+        nextShareX++,
         guardian.x25519PublicKeyB64,
       );
     }
@@ -100,8 +108,21 @@ class EvidenceEncryptor {
       wrappedKeyB64: wrappedKeyB64,
       signatureB64: signatureB64,
       encryptedAt: DateTime.now(),
-      guardianWrappedKeys: guardianWrappedKeys,
+      guardianShares: guardianShares,
+      nextShareX: nextShareX,
     );
+  }
+
+  /// Issues a share for a guardian paired after the incident was recorded.
+  /// Shares come from a polynomial derived deterministically from the
+  /// incident key, so a late share combines with ones issued at record time.
+  static Future<String> issueGuardianShare({
+    required String wrappedKeyB64,
+    required int x,
+    required String guardianX25519PublicKeyB64,
+  }) async {
+    final incidentKey = await unwrapIncidentKey(wrappedKeyB64);
+    return _sealShareForGuardian(incidentKey, x, guardianX25519PublicKeyB64);
   }
 
   /// Encrypts [incidentKey]'s raw bytes under the device's vault key, so
@@ -135,34 +156,62 @@ class EvidenceEncryptor {
     return SecretKey(keyBytes);
   }
 
-  /// Wraps [incidentKey] for a single guardian: a standard "sealed box" —
-  /// X25519 key agreement between this device and the guardian's public
-  /// key, HKDF to derive a symmetric key from that shared secret, then
-  /// AES-GCM. Static-static X25519 (both sides hold long-term keypairs
-  /// exchanged at pairing) means the guardian can unwrap it with their own
-  /// private key and this device's public key, without ever holding this
-  /// device's private key.
-  static Future<String> _wrapIncidentKeyForGuardian(
-    SecretKey incidentKey,
-    String guardianX25519PublicKeyB64,
-  ) async {
-    final sharedKey = await _deriveGuardianSharedKey(guardianX25519PublicKeyB64);
+  /// Number of guardian shares needed to rebuild an incident key, so no
+  /// single guardian (who could be the attacker) can view a clip alone.
+  static const int guardianQuorum = 2;
 
-    final wrapAlgorithm = AesGcm.with256bits();
-    final incidentKeyBytes = await incidentKey.extractBytes();
-    final wrappedBox = await wrapAlgorithm.encrypt(
-      incidentKeyBytes,
-      secretKey: sharedKey,
+  static Future<List<Uint8List>> _shareCoefficients(SecretKey incidentKey) async {
+    final keyLength = (await incidentKey.extractBytes()).length;
+    final hkdf = Hkdf(
+      hmac: Hmac.sha256(),
+      outputLength: keyLength * (guardianQuorum - 1),
     );
-
-    return base64Encode(_packSecretBox(wrappedBox));
+    final derived = await (await hkdf.deriveKey(
+      secretKey: incidentKey,
+      info: utf8.encode('justice-chain-shamir-coefficients-v1'),
+    )).extractBytes();
+    return [
+      for (var i = 0; i < guardianQuorum - 1; i++)
+        Uint8List.fromList(derived.sublist(i * keyLength, (i + 1) * keyLength)),
+    ];
   }
 
-  /// Unwraps a key produced by [_wrapIncidentKeyForGuardian]. Called by a
-  /// guardian device, passing its own X25519 keypair and the sender's
-  /// public key — the shared secret is identical in both directions.
-  static Future<SecretKey> unwrapIncidentKeyFromGuardian({
-    required String wrappedKeyB64,
+  /// Seals Shamir share [x] of [incidentKey] for one guardian: X25519 key
+  /// agreement with the guardian's public key, HKDF, then AES-GCM over
+  /// `[x] ++ y`. The guardian unseals it with their own private key and
+  /// this device's public key, never holding this device's private key.
+  static Future<String> _sealShareForGuardian(
+    SecretKey incidentKey,
+    int x,
+    String guardianX25519PublicKeyB64,
+  ) async {
+    final share = Shamir.shareAt(
+      secret: Uint8List.fromList(await incidentKey.extractBytes()),
+      coefficients: await _shareCoefficients(incidentKey),
+      x: x,
+    );
+    return sealShare(share, guardianX25519PublicKeyB64);
+  }
+
+  /// Seals an existing share to [recipientX25519PublicKeyB64] from this
+  /// device. Also used by a guardian forwarding their own share to a
+  /// co-guardian to form a quorum.
+  static Future<String> sealShare(
+    ShamirShare share,
+    String recipientX25519PublicKeyB64,
+  ) async {
+    final sharedKey = await _deriveGuardianSharedKey(recipientX25519PublicKeyB64);
+    final sealedBox = await AesGcm.with256bits().encrypt(
+      [share.x, ...share.y],
+      secretKey: sharedKey,
+    );
+    return base64Encode(_packSecretBox(sealedBox));
+  }
+
+  /// Unseals a share produced by [_sealShareForGuardian]. Called on the
+  /// guardian's device with its own keypair and the sender's public key.
+  static Future<ShamirShare> unsealGuardianShare({
+    required String sealedShareB64,
     required SimpleKeyPair ownX25519KeyPair,
     required String senderX25519PublicKeyB64,
   }) async {
@@ -170,15 +219,21 @@ class EvidenceEncryptor {
       ownX25519KeyPair,
       senderX25519PublicKeyB64,
     );
-
-    final wrapAlgorithm = AesGcm.with256bits();
-    final wrappedBox = _unpackSecretBox(base64Decode(wrappedKeyB64));
-    final keyBytes = await wrapAlgorithm.decrypt(
-      wrappedBox,
+    final bytes = await AesGcm.with256bits().decrypt(
+      _unpackSecretBox(base64Decode(sealedShareB64)),
       secretKey: sharedKey,
     );
+    return (x: bytes.first, y: Uint8List.fromList(bytes.sublist(1)));
+  }
 
-    return SecretKey(keyBytes);
+  /// Rebuilds the incident key from at least [guardianQuorum] unsealed shares.
+  static SecretKey recoverIncidentKey(List<ShamirShare> shares) {
+    if (shares.length < guardianQuorum) {
+      throw StateError(
+        'Need $guardianQuorum guardian shares to decrypt, got ${shares.length}.',
+      );
+    }
+    return SecretKey(Shamir.combine(shares));
   }
 
   /// Derives the sealed-box wrapping key between this device and
@@ -221,21 +276,13 @@ class EvidenceEncryptor {
     return _decryptFileWithKey(cipherPath, incidentKey);
   }
 
-  /// Decrypts a `.enc` file as a guardian: unwraps the incident key from
-  /// its guardian-wrapped share (see [unwrapIncidentKeyFromGuardian]) and
-  /// decrypts the ciphertext with it.
-  static Future<Uint8List> decryptFileAsGuardian({
+  /// Decrypts a `.enc` file from a guardian quorum's unsealed shares. A
+  /// wrong or insufficient set of shares fails AES-GCM authentication.
+  static Future<Uint8List> decryptFileWithShares({
     required String cipherPath,
-    required String wrappedKeyB64,
-    required SimpleKeyPair ownX25519KeyPair,
-    required String senderX25519PublicKeyB64,
-  }) async {
-    final incidentKey = await unwrapIncidentKeyFromGuardian(
-      wrappedKeyB64: wrappedKeyB64,
-      ownX25519KeyPair: ownX25519KeyPair,
-      senderX25519PublicKeyB64: senderX25519PublicKeyB64,
-    );
-    return _decryptFileWithKey(cipherPath, incidentKey);
+    required List<ShamirShare> shares,
+  }) {
+    return _decryptFileWithKey(cipherPath, recoverIncidentKey(shares));
   }
 
   static Future<Uint8List> _decryptFileWithKey(

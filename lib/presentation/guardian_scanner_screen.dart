@@ -34,8 +34,9 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
         final nodeId = data['node_id'];
         final publicKey = data['public_key'];
         final x25519PublicKey = data['x25519_public_key'] as String?;
+        final anchoringAddress = data['anchoring_address'] as String?;
 
-        _promptForName(nodeId, publicKey, x25519PublicKey);
+        _promptForName(nodeId, publicKey, x25519PublicKey, anchoringAddress);
       }
     } catch (e) {
       // Ignore normal text QR codes
@@ -47,6 +48,7 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
     String nodeId,
     String publicKey,
     String? x25519PublicKey,
+    String? anchoringAddress,
   ) async {
     String guardianName = '';
     
@@ -88,6 +90,7 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
                   publicKey: publicKey,
                   name: guardianName.trim(),
                   x25519PublicKey: x25519PublicKey,
+                  anchoringAddress: anchoringAddress,
                 );
                 
                 if (mounted) {

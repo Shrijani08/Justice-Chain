@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'ai_service.dart';
 import 'evidence_vault_service.dart';
+import 'mesh_service.dart';
 import '../logic/safety_signals.dart';
 
 class EmergencyController {
@@ -78,6 +79,10 @@ class EmergencyController {
       // 3. Update states sequentially to update UI widgets
       isRecording.value = true;
       appStatus.value = "RECORDING EVIDENCE...";
+
+      // Become visible to nearby guardians now, so a link is already up
+      // by the time the clip is sealed and queued for relay.
+      unawaited(MeshService.startAdvertising());
 
       // 4. Arm the failsafe: if nothing stops the recording first, this
       // fires on its own and seals whatever was captured so far.

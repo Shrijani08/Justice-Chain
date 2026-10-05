@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:justice_chain/core/evidence_encryptor.dart';
 import 'package:justice_chain/core/identity_service.dart';
+import 'package:justice_chain/core/shamir.dart';
 
 // Regression coverage for the Phase 2 fix: recordings must never reach IPFS
 // (or any disk location) as plaintext. These tests lock in the full
@@ -108,121 +109,117 @@ void main() {
     );
   });
 
-  group('guardian key sharing', () {
-    // These simulate a second physical device (the guardian) by generating
-    // its X25519 keypair directly, independent of the sender's secure
-    // storage mock — unwrapIncidentKeyFromGuardian takes the guardian's
-    // keypair as an explicit parameter for exactly this reason.
-    test(
-      'a guardian can unwrap and decrypt using only their own keypair and '
-      "the sender's public key — never the sender's private key",
-      () async {
-        final guardianKeyPair = await X25519().newKeyPair();
-        final guardianPublicKeyB64 = base64Encode(
-          (await guardianKeyPair.extractPublicKey()).bytes,
-        );
+  group('guardian quorum key sharing', () {
+    // Each guardian is simulated as a separate device by generating its
+    // X25519 keypair directly, independent of the sender's storage mock.
+    late String senderX25519PublicKeyB64;
 
-        final result = await EvidenceEncryptor.encryptAndSeal(
-          plaintextPath,
-          guardians: [
-            (nodeId: 'guardian-1', x25519PublicKeyB64: guardianPublicKeyB64),
-          ],
-        );
+    setUp(() async {
+      final senderPayload = await IdentityService.getQrPayload();
+      senderX25519PublicKeyB64 =
+          jsonDecode(senderPayload)['x25519_public_key'] as String;
+    });
 
-        expect(result.guardianWrappedKeys, contains('guardian-1'));
+    Future<(SimpleKeyPair, GuardianKeyInfo)> newGuardian(String id) async {
+      final keyPair = await X25519().newKeyPair();
+      final publicKeyB64 = base64Encode((await keyPair.extractPublicKey()).bytes);
+      return (keyPair, (nodeId: id, x25519PublicKeyB64: publicKeyB64));
+    }
 
-        final senderPayload = await IdentityService.getQrPayload();
-        final senderX25519PublicKeyB64 =
-            jsonDecode(senderPayload)['x25519_public_key'] as String;
-
-        final recovered = await EvidenceEncryptor.decryptFileAsGuardian(
-          cipherPath: result.cipherPath,
-          wrappedKeyB64: result.guardianWrappedKeys['guardian-1']!,
-          ownX25519KeyPair: guardianKeyPair,
-          senderX25519PublicKeyB64: senderX25519PublicKeyB64,
-        );
-
-        expect(utf8.decode(recovered), plaintextContent);
-      },
-    );
-
-    test('a different guardian\'s keypair cannot unwrap the share', () async {
-      final guardianKeyPair = await X25519().newKeyPair();
-      final guardianPublicKeyB64 = base64Encode(
-        (await guardianKeyPair.extractPublicKey()).bytes,
+    Future<ShamirShare> unseal(String sealed, SimpleKeyPair keyPair) {
+      return EvidenceEncryptor.unsealGuardianShare(
+        sealedShareB64: sealed,
+        ownX25519KeyPair: keyPair,
+        senderX25519PublicKeyB64: senderX25519PublicKeyB64,
       );
-      final impostorKeyPair = await X25519().newKeyPair();
+    }
+
+    test('any two of three guardians can decrypt together', () async {
+      final a = await newGuardian('guardian-a');
+      final b = await newGuardian('guardian-b');
+      final c = await newGuardian('guardian-c');
 
       final result = await EvidenceEncryptor.encryptAndSeal(
         plaintextPath,
-        guardians: [
-          (nodeId: 'guardian-1', x25519PublicKeyB64: guardianPublicKeyB64),
-        ],
+        guardians: [a.$2, b.$2, c.$2],
       );
 
-      final senderPayload = await IdentityService.getQrPayload();
-      final senderX25519PublicKeyB64 =
-          jsonDecode(senderPayload)['x25519_public_key'] as String;
+      final shareA = await unseal(result.guardianShares['guardian-a']!, a.$1);
+      final shareB = await unseal(result.guardianShares['guardian-b']!, b.$1);
+      final shareC = await unseal(result.guardianShares['guardian-c']!, c.$1);
+
+      for (final pair in [
+        [shareA, shareB],
+        [shareA, shareC],
+        [shareB, shareC],
+      ]) {
+        final recovered = await EvidenceEncryptor.decryptFileWithShares(
+          cipherPath: result.cipherPath,
+          shares: pair,
+        );
+        expect(utf8.decode(recovered), plaintextContent);
+      }
+    });
+
+    test('a single guardian share cannot decrypt', () async {
+      final a = await newGuardian('guardian-a');
+      final result = await EvidenceEncryptor.encryptAndSeal(
+        plaintextPath,
+        guardians: [a.$2],
+      );
+      final shareA = await unseal(result.guardianShares['guardian-a']!, a.$1);
 
       expect(
-        () => EvidenceEncryptor.decryptFileAsGuardian(
+        () => EvidenceEncryptor.decryptFileWithShares(
           cipherPath: result.cipherPath,
-          wrappedKeyB64: result.guardianWrappedKeys['guardian-1']!,
-          ownX25519KeyPair: impostorKeyPair,
-          senderX25519PublicKeyB64: senderX25519PublicKeyB64,
+          shares: [shareA],
         ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test("a different guardian's keypair cannot unseal the share", () async {
+      final a = await newGuardian('guardian-a');
+      final impostor = await X25519().newKeyPair();
+      final result = await EvidenceEncryptor.encryptAndSeal(
+        plaintextPath,
+        guardians: [a.$2],
+      );
+
+      expect(
+        () => unseal(result.guardianShares['guardian-a']!, impostor),
         throwsA(anything),
       );
     });
 
-    test('with no guardians passed, guardianWrappedKeys is empty', () async {
-      final result = await EvidenceEncryptor.encryptAndSeal(plaintextPath);
+    test('a share issued after recording combines with one issued at recording', () async {
+      final a = await newGuardian('guardian-a');
+      final lateGuardian = await newGuardian('guardian-late');
+      final result = await EvidenceEncryptor.encryptAndSeal(
+        plaintextPath,
+        guardians: [a.$2],
+      );
 
-      expect(result.guardianWrappedKeys, isEmpty);
+      final lateSealed = await EvidenceEncryptor.issueGuardianShare(
+        wrappedKeyB64: result.wrappedKeyB64,
+        x: result.nextShareX,
+        guardianX25519PublicKeyB64: lateGuardian.$2.x25519PublicKeyB64,
+      );
+
+      final recovered = await EvidenceEncryptor.decryptFileWithShares(
+        cipherPath: result.cipherPath,
+        shares: [
+          await unseal(result.guardianShares['guardian-a']!, a.$1),
+          await unseal(lateSealed, lateGuardian.$1),
+        ],
+      );
+      expect(utf8.decode(recovered), plaintextContent);
     });
 
-    test(
-      'wrapping for two guardians produces independently-unwrappable shares',
-      () async {
-        final guardianA = await X25519().newKeyPair();
-        final guardianB = await X25519().newKeyPair();
-        final guardianAPublicKeyB64 = base64Encode(
-          (await guardianA.extractPublicKey()).bytes,
-        );
-        final guardianBPublicKeyB64 = base64Encode(
-          (await guardianB.extractPublicKey()).bytes,
-        );
-
-        final result = await EvidenceEncryptor.encryptAndSeal(
-          plaintextPath,
-          guardians: [
-            (nodeId: 'guardian-a', x25519PublicKeyB64: guardianAPublicKeyB64),
-            (nodeId: 'guardian-b', x25519PublicKeyB64: guardianBPublicKeyB64),
-          ],
-        );
-
-        expect(result.guardianWrappedKeys.keys, {'guardian-a', 'guardian-b'});
-
-        final senderPayload = await IdentityService.getQrPayload();
-        final senderX25519PublicKeyB64 =
-            jsonDecode(senderPayload)['x25519_public_key'] as String;
-
-        final recoveredByA = await EvidenceEncryptor.decryptFileAsGuardian(
-          cipherPath: result.cipherPath,
-          wrappedKeyB64: result.guardianWrappedKeys['guardian-a']!,
-          ownX25519KeyPair: guardianA,
-          senderX25519PublicKeyB64: senderX25519PublicKeyB64,
-        );
-        final recoveredByB = await EvidenceEncryptor.decryptFileAsGuardian(
-          cipherPath: result.cipherPath,
-          wrappedKeyB64: result.guardianWrappedKeys['guardian-b']!,
-          ownX25519KeyPair: guardianB,
-          senderX25519PublicKeyB64: senderX25519PublicKeyB64,
-        );
-
-        expect(utf8.decode(recoveredByA), plaintextContent);
-        expect(utf8.decode(recoveredByB), plaintextContent);
-      },
-    );
+    test('with no guardians passed, guardianShares is empty', () async {
+      final result = await EvidenceEncryptor.encryptAndSeal(plaintextPath);
+      expect(result.guardianShares, isEmpty);
+      expect(result.nextShareX, 1);
+    });
   });
 }

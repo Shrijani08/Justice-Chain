@@ -10,8 +10,10 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../core/app_services.dart';
 import '../core/emergency_controller.dart';
 import '../core/evidence_vault_service.dart';
+import '../core/mesh_service.dart';
 import '../logic/safety_signals.dart';
 import 'evidence_viewer_screen.dart';
+import 'guardian_evidence_screen.dart';
 import 'guardian_pairing_screen.dart';
 import 'guardian_scanner_screen.dart';
 
@@ -67,7 +69,21 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       Permission.microphone,
       Permission.storage,
       Permission.location,
+      Permission.bluetoothScan,
+      Permission.bluetoothAdvertise,
+      Permission.bluetoothConnect,
+      Permission.nearbyWifiDevices,
     ].request();
+
+    // Listen for paired contacts in distress while the app is open, so
+    // this phone can act as their guardian relay.
+    final canUseMesh = (statuses[Permission.location]?.isGranted ?? false) ||
+        (statuses[Permission.bluetoothScan]?.isGranted ?? false);
+    if (canUseMesh) {
+      await MeshService.startDiscovery();
+    } else {
+      logger.w("Nearby permissions denied: offline guardian relay disabled.");
+    }
 
     final hasCameraPermission = statuses[Permission.camera]?.isGranted ?? false;
     final hasMicrophonePermission =
@@ -435,6 +451,18 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                   },
                   icon: const Icon(Icons.video_library),
                   label: const Text('My Evidence'),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const GuardianEvidenceScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.shield),
+                  label: const Text('Guardian Evidence'),
                 ),
               ] else ...[
                 ElevatedButton.icon(
