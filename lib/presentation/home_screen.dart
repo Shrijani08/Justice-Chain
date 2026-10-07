@@ -144,6 +144,39 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     }
   }
 
+  /// Hands the camera back to the OS so another screen (the QR scanner) can
+  /// open it. The home screen's controller would otherwise be closed under it
+  /// and keep reporting itself as initialized.
+  Future<void> _releaseCamera() async {
+    final controller = _cameraController;
+    _cameraController = null;
+    EmergencyController.cameraController = null;
+    cameraReady.value = false;
+    await controller?.dispose();
+  }
+
+  Future<void> _restartCamera() async {
+    await _releaseCamera();
+    await _initializeCamera();
+  }
+
+  /// Opens a screen that needs the camera itself, then takes it back.
+  Future<void> _openCameraScreen(Widget screen) async {
+    if (isRecording.value) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Stop the recording first.')),
+      );
+      return;
+    }
+    await _releaseCamera();
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => screen),
+    );
+    if (mounted) await _initializeCamera();
+  }
+
   Future<void> startEmergencyRecording() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       logger.e("Recording failed: Camera not initialized");
@@ -155,7 +188,17 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       // EmergencyController owns both the hardware recording call and the
       // 45-second failsafe timer, so the failsafe keeps running even if
       // this screen is disposed or the device screen locks mid-recording.
-      await EmergencyController.startRecording();
+      try {
+        await EmergencyController.startRecording();
+      } catch (e) {
+        // The OS can close the camera under us (another app, screen lock),
+        // leaving a controller that still claims to be initialized. Reopen
+        // it once and retry rather than losing the recording.
+        logger.w("Recording failed to start ($e). Restarting camera and retrying.");
+        await _restartCamera();
+        if (_cameraController == null) rethrow;
+        await EmergencyController.startRecording();
+      }
       isRecording.value = true;
       appStatus.value = "RECORDING EVIDENCE...";
       logger.w("Emergency Recording Started!");
@@ -426,14 +469,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     ),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const GuardianScannerScreen(),
-                          ),
-                        );
-                      },
+                      onPressed: () =>
+                          _openCameraScreen(const GuardianScannerScreen()),
                       icon: const Icon(Icons.qr_code_scanner),
                       label: const Text('Scan QR'),
                     ),
