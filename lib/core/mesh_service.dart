@@ -54,6 +54,7 @@ class MeshService {
 
   static bool _advertising = false;
   static bool _discovering = false;
+  static DateTime? _lastRefresh;
 
   static Future<String> _getLocalNodeId() => IdentityService.getMyNodeId();
 
@@ -90,6 +91,35 @@ class MeshService {
     developer.log('🔇 Stopped advertising.', name: 'JusticeChain.Mesh');
   }
 
+  /// Android silently stops Nearby advertising and discovery when Bluetooth
+  /// goes off (e.g. airplane mode) and never reports it, so the flags above
+  /// would stay true with the phone invisible. While no peer is connected,
+  /// restart whatever should be running. Called on every outbox run.
+  static Future<void> refreshIfIdle() async {
+    if (_connectedNodes.isNotEmpty) return;
+    // Restarting too often would cut off a connection still being set up.
+    final now = DateTime.now();
+    if (_lastRefresh != null &&
+        now.difference(_lastRefresh!) < const Duration(seconds: 60)) {
+      return;
+    }
+    _lastRefresh = now;
+    if (_advertising) {
+      try {
+        await Nearby().stopAdvertising();
+      } catch (_) {}
+      _advertising = false;
+      await startAdvertising();
+    }
+    if (_discovering) {
+      try {
+        await Nearby().stopDiscovery();
+      } catch (_) {}
+      _discovering = false;
+      await startDiscovery();
+    }
+  }
+
   /// Stops advertising when there's nothing left to hand to a guardian,
   /// unless an incident is being recorded right now.
   static Future<void> stopAdvertisingIfIdle() async {
@@ -105,8 +135,10 @@ class MeshService {
   static Future<void> startDiscovery() async {
     if (_discovering) return;
     try {
+      // The first argument is this device's display name, not the service
+      // ID; serviceId must be passed by name to match startAdvertising.
       _discovering = await Nearby().startDiscovery(
-        _serviceId,
+        await _getLocalNodeId(),
         strategy,
         onEndpointFound: (endpointId, endpointName, serviceId) {
           // CRITICAL SECURITY: Only connect to node IDs in our whitelist.
@@ -121,6 +153,7 @@ class MeshService {
         onEndpointLost: (endpointId) {
           developer.log('📉 Lost endpoint: $endpointId', name: 'JusticeChain.Mesh');
         },
+        serviceId: _serviceId,
       );
       if (_discovering) {
         developer.log('📡 Discovery started. Listening for trusted nodes...', name: 'JusticeChain.Mesh');

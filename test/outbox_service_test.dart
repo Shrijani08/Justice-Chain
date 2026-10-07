@@ -235,6 +235,29 @@ void main() {
     });
   });
 
+  group('retryAllNow', () {
+    test('makes backed-off jobs due but leaves failed jobs alone', () async {
+      OutboxService.dispatchOverride = (_, __) async => throw Exception('offline');
+      await OutboxService.enqueueUpload('rec1');
+      await OutboxService.enqueueUpload('rec2');
+      await OutboxService.process();
+      await box.put('ipfs_upload:rec2', job('ipfs_upload:rec2')..['failed'] = true);
+
+      OutboxService.dispatchOverride = (type, payload) async {
+        dispatched.add((type, payload));
+      };
+      await OutboxService.process();
+      expect(dispatched, isEmpty, reason: 'still inside the 30 s backoff');
+
+      await OutboxService.retryAllNow();
+      await OutboxService.process();
+
+      expect(dispatched.single.$2['recordKey'], 'rec1');
+      expect(box.containsKey('ipfs_upload:rec1'), isFalse);
+      expect(job('ipfs_upload:rec2')['failed'], true);
+    });
+  });
+
   group('pending mesh jobs', () {
     test('only live mesh jobs count', () async {
       await OutboxService.enqueueUpload('rec1');

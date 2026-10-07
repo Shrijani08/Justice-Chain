@@ -61,6 +61,11 @@ class AIService {
   static const int _windowSampleCount = 32000;
   static const int _inferenceStrideSamples = _sampleRate;
 
+  /// After a recording ends, the AI keeps listening but can't start another
+  /// one on its own for this long. Without it, background speech re-triggers
+  /// a new clip seconds after every stop. The SOS button is unaffected.
+  static const Duration postRecordingCooldown = Duration(seconds: 30);
+
   final AudioRecorder _audioRecorder = AudioRecorder();
   final ListQueue<double> _rollingSamples = ListQueue<double>();
   final ListQueue<bool> _recentWindowPasses = ListQueue<bool>();
@@ -76,6 +81,7 @@ class AIService {
   bool _isInitializing = false;
   bool _isPausedForRecording = false;
   int _samplesSinceLastInference = 0;
+  DateTime? _autoTriggerBlockedUntil;
   String? _lastModelError;
 
   bool get isModelLoaded => _isModelLoaded;
@@ -213,6 +219,7 @@ class AIService {
   Future<void> resumeAfterRecording() async {
     if (!_isPausedForRecording) return;
     _isPausedForRecording = false;
+    _autoTriggerBlockedUntil = DateTime.now().add(postRecordingCooldown);
     await startMonitoring();
   }
 
@@ -291,7 +298,13 @@ class AIService {
       final percent = (prediction.confidence * 100).toStringAsFixed(0);
       aiStatus.value = 'AI prediction: ${prediction.label} ($percent%)';
 
-      final windowPassed = prediction.label.toLowerCase() == 'distress' &&
+      final inCooldown = _autoTriggerBlockedUntil != null &&
+          DateTime.now().isBefore(_autoTriggerBlockedUntil!);
+      if (inCooldown) {
+        aiStatus.value = 'AI prediction: ${prediction.label} ($percent%) · cooling down';
+      }
+      final windowPassed = !inCooldown &&
+          prediction.label.toLowerCase() == 'distress' &&
           prediction.confidence >= distressThreshold;
       final confirmedByHistory = _recordWindowPass(windowPassed);
 

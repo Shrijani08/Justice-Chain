@@ -56,9 +56,26 @@ class OutboxService {
   static Future<void> start() async {
     _timer ??= Timer.periodic(const Duration(minutes: 1), (_) => process());
     _connectivitySub ??= Connectivity().onConnectivityChanged.listen((results) {
-      if (!results.contains(ConnectivityResult.none)) process();
+      if (!results.contains(ConnectivityResult.none)) {
+        unawaited(retryAllNow().then((_) => process()));
+      }
     });
+    // Jobs may have backed off for many minutes while the app was closed.
+    await retryAllNow();
     unawaited(process());
+  }
+
+  /// Makes every live job due immediately. Backoff exists to avoid hammering
+  /// a dead network; once the network is back, waiting out a 16-minute
+  /// backoff would just leave evidence sitting on the phone.
+  static Future<void> retryAllNow() async {
+    final now = DateTime.now().toIso8601String();
+    for (final id in _box.keys.toList()) {
+      final raw = _box.get(id);
+      if (raw is! Map || raw['failed'] == true) continue;
+      final job = Map<String, dynamic>.from(raw)..['nextAttemptAt'] = now;
+      await _box.put(id, job);
+    }
   }
 
   /// Queues a job. [id] deduplicates: enqueueing an id that is already
@@ -137,6 +154,7 @@ class OutboxService {
 
       // Stay visible to guardians only while something is waiting for one.
       if (manageAdvertising) {
+        await MeshService.refreshIfIdle();
         if (_hasPendingMeshJobs()) {
           await MeshService.startAdvertising();
         } else {
