@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'evidence_vault_service.dart';
@@ -39,6 +40,18 @@ class OutboxService {
   static StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   static bool _processing = false;
   static bool _rerunRequested = false;
+
+  /// Test seam: replaces the real job handlers when set.
+  @visibleForTesting
+  static Future<void> Function(String type, Map<String, dynamic> payload)?
+      dispatchOverride;
+
+  /// Test seam: false skips starting/stopping mesh advertising after a run.
+  @visibleForTesting
+  static bool manageAdvertising = true;
+
+  @visibleForTesting
+  static bool hasPendingMeshJobs() => _hasPendingMeshJobs();
 
   static Future<void> start() async {
     _timer ??= Timer.periodic(const Duration(minutes: 1), (_) => process());
@@ -123,10 +136,12 @@ class OutboxService {
       } while (_rerunRequested);
 
       // Stay visible to guardians only while something is waiting for one.
-      if (_hasPendingMeshJobs()) {
-        await MeshService.startAdvertising();
-      } else {
-        await MeshService.stopAdvertisingIfIdle();
+      if (manageAdvertising) {
+        if (_hasPendingMeshJobs()) {
+          await MeshService.startAdvertising();
+        } else {
+          await MeshService.stopAdvertisingIfIdle();
+        }
       }
     } finally {
       _processing = false;
@@ -169,6 +184,8 @@ class OutboxService {
   }
 
   static Future<void> _dispatch(String type, Map<String, dynamic> payload) {
+    final override = dispatchOverride;
+    if (override != null) return override(type, payload);
     final recordKey = payload['recordKey'] as String;
     switch (type) {
       case jobUpload:

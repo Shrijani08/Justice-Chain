@@ -51,11 +51,13 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
     String? anchoringAddress,
   ) async {
     String guardianName = '';
-    
-    await showDialog(
+
+    // The dialog only collects the name; saving and navigation happen below
+    // with this screen's context, which is still valid after the dialog closes.
+    final name = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           title: const Text('Add Trusted Guardian'),
           content: Column(
@@ -74,32 +76,13 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() => _isProcessing = false); // Unlock scanner
-              },
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: () async {
+              onPressed: () {
                 if (guardianName.trim().isEmpty) return;
-                
-                // Save to Hive
-                await GuardianManager.addGuardian(
-                  nodeId: nodeId,
-                  publicKey: publicKey,
-                  name: guardianName.trim(),
-                  x25519PublicKey: x25519PublicKey,
-                  anchoringAddress: anchoringAddress,
-                );
-                
-                if (mounted) {
-                  Navigator.pop(context); // Close dialog
-                  Navigator.pop(context); // Return to Home Screen
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('🛡️ ${guardianName.trim()} is now a Trusted Guardian!')),
-                  );
-                }
+                Navigator.pop(dialogContext, guardianName.trim());
               },
               child: const Text('Save'),
             )
@@ -107,6 +90,37 @@ class _GuardianScannerScreenState extends State<GuardianScannerScreen> {
         );
       }
     );
+
+    if (!mounted) return;
+    if (name == null) {
+      setState(() => _isProcessing = false); // Cancelled: unlock scanner
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      // Save to Hive
+      await GuardianManager.addGuardian(
+        nodeId: nodeId,
+        publicKey: publicKey,
+        name: name,
+        x25519PublicKey: x25519PublicKey,
+        anchoringAddress: anchoringAddress,
+      );
+    } catch (e) {
+      developer.log('Failed to save guardian', error: e);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not save guardian. Please scan again.')),
+      );
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
+
+    // The messenger is app-wide, so the snackbar stays visible on the Home Screen.
+    messenger.showSnackBar(
+      SnackBar(content: Text('🛡️ $name is now a Trusted Guardian!')),
+    );
+    if (mounted) Navigator.pop(context); // Return to Home Screen
   }
 
   @override
