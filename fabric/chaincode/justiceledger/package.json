@@ -1,0 +1,19 @@
+{
+  "name": "justiceledger",
+  "version": "0.1.0",
+  "description": "Justice-Chain evidence anchors on Hyperledger Fabric (port of contracts/JusticeLedger.sol)",
+  "main": "index.js",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "fabric-chaincode-node start",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "ethers": "~6.13.4",
+    "fabric-contract-api": "~2.5.0",
+    "fabric-shim": "~2.5.0"
+  }
+}
