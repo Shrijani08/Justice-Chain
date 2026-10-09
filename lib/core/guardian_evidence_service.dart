@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -179,10 +180,7 @@ class GuardianEvidenceService {
       checks.add(_checkSigner(anchor.signer, incident.victimNodeId));
 
       final block = await AnchoringService.findAnchorBlock(manifestHash);
-      final when = block?.blockTime ?? anchor.anchoredAt;
-      anchorSummary = block != null
-          ? 'Verified: anchored in block ${block.blockNumber} at ${_fmt(when)}'
-          : 'Verified: anchored at ${_fmt(when)}';
+      anchorSummary = 'Verified: ${describeAnchor(block, anchor)}';
       checks.add(VerificationCheck(
         'Anchored on-chain',
         true,
@@ -248,6 +246,20 @@ class GuardianEvidenceService {
     }
     final ok = expected.toLowerCase() == chainSigner.toLowerCase();
     return VerificationCheck(label, ok, ok ? chainSigner : 'expected $expected, chain has $chainSigner');
+  }
+
+  /// Where and when an anchor was recorded. On Fabric the record's time is
+  /// the gateway's clock and blocks carry no time, so it is labelled as
+  /// gateway time rather than passed off as ledger time.
+  @visibleForTesting
+  static String describeAnchor(AnchorBlock? block, AnchorVerificationResult anchor) {
+    final blockTime = block?.blockTime;
+    final when = blockTime != null
+        ? 'at ${_fmt(blockTime)}'
+        : anchor.anchoredAtIsLedgerTime
+            ? 'at ${_fmt(anchor.anchoredAt)}'
+            : '· gateway time ${_fmt(anchor.anchoredAt)}';
+    return block != null ? 'anchored in block ${block.blockNumber} $when' : 'anchored $when';
   }
 
   static String _fmt(DateTime t) {

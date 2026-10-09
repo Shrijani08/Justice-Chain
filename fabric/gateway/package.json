@@ -1,0 +1,18 @@
+{
+  "name": "justice-chain-fabric-gateway",
+  "version": "0.1.0",
+  "description": "HTTP gateway the Justice-Chain app calls to anchor and verify evidence on Hyperledger Fabric",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@hyperledger/fabric-gateway": "^1.7.0",
+    "@hyperledger/fabric-protos": "^0.2.2"
+  }
+}
