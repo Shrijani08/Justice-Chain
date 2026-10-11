@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Officer Portal (SIMULATED)</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1d2433; --muted: #5d6779; --line: #dde2ea;
+    --accent: #2457c5; --ok: #1b7f3b; --bad: #b42318; --warn-bg: #b42318; --warn-ink: #fff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+  .banner {
+    position: sticky; top: 0; z-index: 10; background: var(--warn-bg); color: var(--warn-ink);
+    padding: 10px 16px; text-align: center; font-weight: 600; letter-spacing: .2px;
+  }
+  .banner small { display: block; font-weight: 400; opacity: .95; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 17px; margin: 0 0 8px; }
+  .who { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13.5px; }
+  .row b { color: var(--ink); font-weight: 600; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: 12.5px; font-weight: 600; border: 1px solid currentColor; }
+  .pill.open { color: #8a5a00; } .pill.released { color: var(--ok); } .pill.none { color: var(--muted); }
+  form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  input { flex: 1 1 200px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; font: inherit; }
+  button { padding: 7px 14px; border-radius: 7px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  ul.checks { list-style: none; padding: 0; margin: 10px 0 0; }
+  ul.checks li { padding: 3px 0; }
+  ul.checks li::before { content: "✔"; color: var(--ok); margin-right: 8px; font-weight: 700; }
+  ul.checks li.bad::before { content: "✘"; color: var(--bad); }
+  ul.checks span { color: var(--muted); font-size: 13.5px; }
+  video { width: 100%; max-height: 420px; margin-top: 12px; background: #000; border-radius: 8px; }
+  ol.audit { margin: 10px 0 0; padding-left: 20px; }
+  ol.audit li { padding: 2px 0; }
+  .error { color: var(--bad); margin-top: 8px; }
+  .empty { color: var(--muted); }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11151c; --card: #191f29; --ink: #e8ecf3; --muted: #9aa5b8; --line: #2c3544; --accent: #6f9cff; }
+  }
+</style>
+</head>
+<body>
+<div class="banner" role="alert">
+  SIMULATED: Demo Police Authority. Not a real police system.
+  <small>No real police are contacted. In an emergency call 112.</small>
+</div>
+<main>
+  <header>
+    <h1>Officer portal</h1>
+    <div class="who" id="who">Connecting…</div>
+  </header>
+  <p class="empty">Clips victims have shared with the Demo Police Authority. SimPolice holds one key piece of each, which is not enough to open it. Access needs a second piece, released by the victim or one of their guardians.</p>
+  <div id="clips"><p class="empty">Loading…</p></div>
+</main>
+<script>
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const when = (seconds) => seconds ? new Date(seconds * 1000).toLocaleString() : '—';
+
+async function api(path, options = {}) {
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  const body = await res.json();
+  if (!res.ok) throw Object.assign(new Error(body.error || res.statusText), { checks: body.checks });
+  return body;
+}
+
+function statusOf(clip) {
+  if (clip.requests.some((r) => r.status === 'released')) return 'released';
+  if (clip.requests.some((r) => r.status === 'open')) return 'open';
+  return 'none';
+}
+
+function renderChecks(checks) {
+  return `<ul class="checks">${(checks || []).map((c) =>
+    `<li class="${c.ok ? '' : 'bad'}">${esc(c.name)} <span>${esc(c.detail)}</span></li>`).join('')}</ul>`;
+}
+
+function renderClip(clip) {
+  const { consent, record, requests } = clip;
+  const status = statusOf(clip);
+  const label = { none: 'No request yet', open: 'Waiting for release', released: 'Released' }[status];
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.innerHTML = `
+    <h2>Clip <code>${esc(consent.manifestHash.slice(0, 16))}…</code> <span class="pill ${status}">${label}</span></h2>
+    <div class="row">
+      <span>Victim node <b><code>${esc(consent.victimNodeId)}</code></b></span>
+      <span>Recorded <b>${when(record.capturedAt)}</b></span>
+      <span>Anchored in block <b>${esc(record.blockNumber ?? '—')}</b></span>
+      <span>Shared <b>${when(consent.sharedAt)}</b></span>
+      <span>Holds piece <b>${esc(consent.shareX)}</b> · <b>${esc(consent.threshold)}</b> pieces needed</span>
+    </div>
+    ${requests.map((r) => `<div class="row" style="margin-top:6px">
+      <span>Request <b>${esc(r.caseRef)}</b> by ${esc(r.requestedBy)}: ${esc(r.reason)}</span>
+      <span><b>${esc(r.status)}</b>${r.status === 'released' ? ` by the ${esc(r.releaserRole)} (piece ${esc(r.releasedShareX)})` : ''}</span>
+    </div>`).join('')}
+    <form class="request">
+      <input name="reason" placeholder="Reason for access" maxlength="300" required>
+      <input name="caseRef" placeholder="Demo case reference" maxlength="64" required>
+      <button type="submit" class="secondary">Request access</button>
+    </form>
+    <div class="actions">
+      <button class="open" ${status === 'released' ? '' : 'disabled'}>Open and verify</button>
+      <button class="secondary audit">Audit trail (supervisor)</button>
+    </div>
+    <div class="result"></div>`;
+
+  const result = $('.result', card);
+  $('form.request', card).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const button = $('button', form);
+    button.disabled = true;
+    try {
+      await api(`/api/clips/${consent.manifestHash}/requests`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: form.reason.value, caseRef: form.caseRef.value }),
+      });
+      await load();
+    } catch (err) {
+      result.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+      button.disabled = false;
+    }
+  });
+  $('button.open', card).addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    result.innerHTML = '<p class="empty">Unsealing, downloading and verifying…</p>';
+    try {
+      const opened = await api(`/api/clips/${consent.manifestHash}/open`, { method: 'POST' });
+      result.innerHTML = `${renderChecks(opened.checks)}<video controls src="${esc(opened.videoUrl)}"></video>`;
+    } catch (err) {
+      result.innerHTML = `${renderChecks(err.checks)}<p class="error">${esc(err.message)}</p>`;
+    }
+    event.target.disabled = false;
+  });
+  $('button.audit', card).addEventListener('click', async () => {
+    try {
+      const trail = await api(`/api/clips/${consent.manifestHash}/audit`);
+      result.innerHTML = `<ol class="audit">${trail.map((e) => `<li><b>${esc(e.event)}</b> ${when(e.at)} by ${
+        esc(e.actor.name || `${e.actor.role} ${e.actor.nodeId}`)}${e.detail && e.detail.caseRef ? ` (${esc(e.detail.caseRef)})` : ''}</li>`).join('')}</ol>`;
+    } catch (err) {
+      result.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    }
+  });
+  return card;
+}
+
+async function load() {
+  const list = $('#clips');
+  try {
+    const clips = await api('/api/clips');
+    list.replaceChildren(...(clips.length ? clips.map(renderClip) : [Object.assign(document.createElement('p'),
+      { className: 'empty', textContent: 'No clips have been shared with this authority yet.' })]));
+  } catch (err) {
+    list.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+  }
+}
+
+api('/api/whoami').then((me) => {
+  $('#who').textContent = `${me.mspId} · ${me.role}${me.unit ? ` · ${me.unit}` : ''}${me.simulated ? ' · SIMULATED' : ''}`;
+}).catch((err) => { $('#who').textContent = err.message; });
+load();
+</script>
+</body>
+</html>

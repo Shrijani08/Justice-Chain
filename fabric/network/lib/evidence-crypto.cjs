@@ -14,6 +14,18 @@ const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
 const GUARDIAN_WRAP_INFO = 'justice-chain-guardian-wrap-v1';
 
 /**
+ * Decrypts an app box: nonce(12) + mac(16) + AES-256-GCM ciphertext, as
+ * EvidenceEncryptor writes .enc clips and sealed pieces. Throws if [key]
+ * is wrong or a byte was changed.
+ */
+function openBox(box, key) {
+  if (box.length < 28) throw new Error('Box too short to contain nonce and MAC.');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, box.subarray(0, 12));
+  decipher.setAuthTag(box.subarray(12, 28));
+  return Buffer.concat([decipher.update(box.subarray(28)), decipher.final()]);
+}
+
+/**
  * Opens a piece sealed to [privateKey] (an X25519 KeyObject, e.g. the
  * evidence desk key) by the holder of [senderPublicKeyB64]: X25519, then
  * HKDF-SHA256 with no salt, then AES-256-GCM over nonce(12) + mac(16) +
@@ -27,10 +39,7 @@ function unsealShare(sealedShareB64, privateKey, senderPublicKeyB64) {
   });
   const shared = crypto.diffieHellman({ privateKey, publicKey: sender });
   const key = Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.alloc(0), GUARDIAN_WRAP_INFO, 32));
-  const box = Buffer.from(sealedShareB64, 'base64');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, box.subarray(0, 12));
-  decipher.setAuthTag(box.subarray(12, 28));
-  const plain = Buffer.concat([decipher.update(box.subarray(28)), decipher.final()]);
+  const plain = openBox(Buffer.from(sealedShareB64, 'base64'), key);
   return { x: plain[0], y: plain.subarray(1) };
 }
 
@@ -77,4 +86,4 @@ function combineShares(shares) {
   return secret;
 }
 
-module.exports = { unsealShare, combineShares };
+module.exports = { openBox, unsealShare, combineShares };

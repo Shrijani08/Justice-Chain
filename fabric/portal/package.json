@@ -1,0 +1,20 @@
+{
+  "name": "justice-chain-officer-portal",
+  "version": "0.1.0",
+  "description": "SIMULATED officer portal for the Demo Police Authority on the Justice-Chain Fabric network",
+  "main": "server.js",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/portal.test.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@hyperledger/fabric-gateway": "^1.7.0",
+    "@hyperledger/fabric-protos": "^0.2.2"
+  }
+}
