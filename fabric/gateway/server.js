@@ -15,6 +15,20 @@
  *   GET  /authorities          registered authorities (e.g. SimPolice), with
  *                              their evidence-desk X25519 public keys
  *   GET  /authorities/:mspId   one authority, or {found: false}
+ *   POST /nodes                {nodeId, ed25519PublicKey, x25519PublicKey,
+ *                              anchoringAddress, ed25519Signature,
+ *                              anchoringSignature}: a phone registers itself
+ *   GET  /nodes/:nodeId        a registration, or {found: false}
+ *   POST /guardians            {victimNodeId, guardianNodeIds, sequence,
+ *                              signature}: the victim's signed guardian list
+ *   GET  /guardians/:nodeId    a victim's guardian list, or {found: false}
+ *   POST /authority-shares     {manifestHash, authorityMsp, shareX, threshold,
+ *                              sealedShare, signature}: the victim gives an
+ *                              authority one sealed key piece. The piece is
+ *                              sent as transient data, so it never appears in
+ *                              a block; only the authority's private
+ *                              collection holds it.
+ *   GET  /authority-shares/:mspId  consents for one authority (no pieces)
  *
  * Times in records (anchoredAt) are the gateway's clock, not the ledger's;
  * blockNumber is the independent evidence of when a record was committed.
@@ -82,11 +96,19 @@ async function blockNumberOf(txId) {
   return Number(common.Block.deserializeBinary(bytes).getHeader().getNumber());
 }
 
-async function anchor(body) {
-  const { manifestHash, cid, capturedAt, nodeId, signature } = body;
-  const commit = await contract.submitAsync('AnchorEvidence', {
-    arguments: [manifestHash, cid, String(capturedAt), nodeId, signature].map((a) => String(a ?? '')),
-  });
+/**
+ * Submits a transaction and waits for it to commit. The result carries the
+ * block it committed in. [transient] values reach the chaincode but are
+ * never written to a block.
+ */
+async function submit(name, args, transient) {
+  const options = { arguments: args.map((a) => String(a ?? '')) };
+  if (transient) {
+    options.transientData = Object.fromEntries(
+      Object.entries(transient).map(([key, value]) => [key, Buffer.from(String(value ?? ''), 'utf8')]),
+    );
+  }
+  const commit = await contract.submitAsync(name, options);
   const record = JSON.parse(utf8.decode(commit.getResult()));
   const status = await commit.getStatus();
   if (!status.successful) {
@@ -95,6 +117,34 @@ async function anchor(body) {
     throw err;
   }
   return { ...record, blockNumber: Number(status.blockNumber) };
+}
+
+async function evaluate(name, ...args) {
+  return JSON.parse(utf8.decode(await contract.evaluateTransaction(name, ...args.map(String))));
+}
+
+function anchor(body) {
+  const { manifestHash, cid, capturedAt, nodeId, signature } = body;
+  return submit('AnchorEvidence', [manifestHash, cid, capturedAt, nodeId, signature]);
+}
+
+function registerNode(body) {
+  const { nodeId, ed25519PublicKey, x25519PublicKey, anchoringAddress, ed25519Signature, anchoringSignature } = body;
+  return submit('RegisterNode',
+    [nodeId, ed25519PublicKey, x25519PublicKey, anchoringAddress, ed25519Signature, anchoringSignature]);
+}
+
+function setGuardians(body) {
+  const { victimNodeId, guardianNodeIds, sequence, signature } = body;
+  if (!Array.isArray(guardianNodeIds)) {
+    throw Object.assign(new Error('guardianNodeIds must be an array'), { httpStatus: 400 });
+  }
+  return submit('SetGuardians', [victimNodeId, JSON.stringify(guardianNodeIds), sequence, signature]);
+}
+
+function shareWithAuthority(body) {
+  const { manifestHash, authorityMsp, shareX, threshold, sealedShare, signature } = body;
+  return submit('ShareWithAuthority', [manifestHash, authorityMsp, shareX, threshold, signature], { sealedShare });
 }
 
 async function verify(manifestHash) {
@@ -176,6 +226,18 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, await authorities());
     } else if (req.method === 'GET' && parts[0] === 'authorities' && parts.length === 2) {
       send(res, 200, await authority(parts[1]));
+    } else if (req.method === 'POST' && url.pathname === '/nodes') {
+      send(res, 200, await registerNode(await readJson(req)));
+    } else if (req.method === 'GET' && parts[0] === 'nodes' && parts.length === 2) {
+      send(res, 200, await evaluate('GetNode', parts[1]));
+    } else if (req.method === 'POST' && url.pathname === '/guardians') {
+      send(res, 200, await setGuardians(await readJson(req)));
+    } else if (req.method === 'GET' && parts[0] === 'guardians' && parts.length === 2) {
+      send(res, 200, await evaluate('GetGuardians', parts[1]));
+    } else if (req.method === 'POST' && url.pathname === '/authority-shares') {
+      send(res, 200, await shareWithAuthority(await readJson(req)));
+    } else if (req.method === 'GET' && parts[0] === 'authority-shares' && parts.length === 2) {
+      send(res, 200, await evaluate('ListAuthorityShares', parts[1]));
     } else {
       status = 404;
       send(res, 404, { error: 'Not found' });

@@ -7,8 +7,9 @@
 #   upgrade-chaincode.sh 1.1        package fabric/chaincode/justiceledger from
 #                                   the repo as version 1.1 and commit it
 #
-# COLLECTIONS=/path/collections_config.json adds a private data collection
-# config (step 8). Run inside WSL, e.g.
+# Private data collections come from collections_config.json next to this
+# script (step 8); COLLECTIONS=/other/file.json or COLLECTIONS=none
+# overrides that. Run inside WSL, e.g.
 #   bash /mnt/d/Justice-Chain/justice-chain2/Justice-Chain/fabric/network/upgrade-chaincode.sh 1.1
 set -eo pipefail
 
@@ -60,8 +61,11 @@ for org in $ORGS; do
   fi
 done
 
+# Once a definition has collections, every later one must repeat them, so
+# the repo's collections config is used unless COLLECTIONS=none.
+COLLECTIONS=${COLLECTIONS:-$(cd "$(dirname "$0")" && pwd)/collections_config.json}
 COLL_ARGS=()
-[ -n "$COLLECTIONS" ] && COLL_ARGS=(--collections-config "$COLLECTIONS")
+[ "$COLLECTIONS" != none ] && COLL_ARGS=(--collections-config "$COLLECTIONS")
 ORDERER_ARGS=(-o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA")
 
 # 3. Every org approves the same definition.

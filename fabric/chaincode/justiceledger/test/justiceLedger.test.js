@@ -18,9 +18,16 @@ const OTHER_HASH = 'aa'.repeat(32);
 const NODE = '0123456789abcdef';
 const CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 
-/** Minimal in-memory stub: composite keys, ordered partial queries, events. */
-function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0, attrs = {}, id = 'x509::CN=user1::CN=ca' } = {}) {
-  const state = new Map();
+/**
+ * Minimal in-memory stub: composite keys, ordered partial queries, events,
+ * private data and transient data. Callers that pass the same [world] see
+ * the same ledger, like different identities on one channel.
+ */
+function makeCtx({
+  msp = 'Org1MSP', seconds = 1791400000, nanos = 0, attrs = {}, id = 'x509::CN=user1::CN=ca',
+  world = { state: new Map(), privateData: new Map() }, transient = new Map(),
+} = {}) {
+  const { state, privateData } = world;
   const events = [];
   const validation = new Map();
   let txCount = 0;
@@ -28,6 +35,9 @@ function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0, attrs = {},
     createCompositeKey: (type, attrs) => `\u0000${type}\u0000${attrs.join('\u0000')}\u0000`,
     getState: async (key) => state.get(key) ?? Buffer.alloc(0),
     putState: async (key, value) => { state.set(key, Buffer.from(value)); },
+    getPrivateData: async (collection, key) => privateData.get(`${collection}/${key}`) ?? Buffer.alloc(0),
+    putPrivateData: async (collection, key, value) => { privateData.set(`${collection}/${key}`, Buffer.from(value)); },
+    getTransient: () => transient,
     getTxTimestamp: () => ({ seconds: { toString: () => String(stub.seconds) }, nanos: stub.nanos }),
     getTxID: () => `tx${++txCount}`,
     setEvent: (name, payload) => events.push({ name, payload: payload.toString() }),
@@ -52,7 +62,7 @@ function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0, attrs = {},
     // Like fabric-shim: null for an attribute the certificate doesn't carry.
     getAttributeValue: (name) => attrs[name] ?? null,
   };
-  return { stub, clientIdentity, events, validation };
+  return { stub, clientIdentity, events, validation, world };
 }
 
 const ledger = new JusticeLedger();
@@ -249,4 +259,231 @@ test('GetAuthority and ListAuthorities are readable by any member and list only 
   assert.equal(one.publicKey, POLICE_KEY);
   assert.deepEqual(JSON.parse(await ledger.GetAuthority(officer, 'NobodyMSP')), { found: false, mspId: 'NobodyMSP' });
   assert.deepEqual(JSON.parse(await ledger.ListAuthorities(officer)).map((a) => a.mspId), ['SimPoliceMSP']);
+});
+
+// --- Node registration, guardians, sharing with an authority ----------------
+
+const nodeCrypto = require('crypto');
+const { Wallet, getBytes } = require('ethers');
+
+const sha256Hex = (data) => nodeCrypto.createHash('sha256').update(data).digest('hex');
+const rawKey = (keyObject) => keyObject.export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64');
+
+/**
+ * A phone's three keys, signing the way the app does: Ed25519 over the
+ * payload's UTF-8 bytes (IdentityService.signBytes), and EIP-191 over the
+ * 32 raw bytes of a SHA-256 (AnchoringService.signAnchor).
+ */
+function makePhone(seed) {
+  const wallet = new Wallet(`0x${sha256Hex(`wallet-${seed}`)}`);
+  const ed = nodeCrypto.generateKeyPairSync('ed25519');
+  const edPub = rawKey(ed.publicKey);
+  const signHash = (hashHex) => wallet.signMessageSync(getBytes(`0x${hashHex}`)).slice(2);
+  return {
+    nodeId: sha256Hex(Buffer.from(edPub, 'base64')).slice(0, 16),
+    edPub,
+    xPub: rawKey(nodeCrypto.generateKeyPairSync('x25519').publicKey),
+    address: wallet.address.toLowerCase(),
+    edSign: (payload) => nodeCrypto.sign(null, Buffer.from(payload, 'utf8'), ed.privateKey).toString('base64'),
+    sign: (payload) => signHash(sha256Hex(Buffer.from(payload, 'utf8'))),
+    signHash,
+  };
+}
+
+function registerPayload(p) {
+  return `justice-chain/register-node/v1|${p.nodeId}|${p.edPub}|${p.xPub}|${p.address}`;
+}
+
+function register(ctx, phone) {
+  const payload = registerPayload(phone);
+  return ledger.RegisterNode(ctx, phone.nodeId, phone.edPub, phone.xPub, phone.address,
+    phone.edSign(payload), phone.sign(payload));
+}
+
+function guardiansPayload(victim, seq, ids) {
+  return `justice-chain/set-guardians/v1|${victim.nodeId}|${seq}|${[...ids].sort().join(',')}`;
+}
+
+test('a phone registers its node ID and keys, signed by both of its keys', async () => {
+  const ctx = makeCtx();
+  const phone = makePhone('victim');
+  const record = JSON.parse(await register(ctx, phone));
+  assert.deepEqual(record, {
+    nodeId: phone.nodeId,
+    ed25519PublicKey: phone.edPub,
+    x25519PublicKey: phone.xPub,
+    anchoringAddress: phone.address,
+    registeredAt: 1791400000,
+  });
+  assert.equal(ctx.events[0].name, 'NodeRegistered');
+  assert.deepEqual(JSON.parse(await ledger.GetNode(ctx, phone.nodeId)), { found: true, ...record });
+  assert.deepEqual(JSON.parse(await ledger.GetNode(ctx, 'fedcba9876543210')), { found: false, nodeId: 'fedcba9876543210' });
+
+  // Repeating the same registration is harmless; other keys for the ID are refused.
+  assert.deepEqual(JSON.parse(await register(ctx, phone)), record);
+  const impostor = { ...makePhone('impostor'), nodeId: phone.nodeId, edPub: phone.edPub, edSign: phone.edSign };
+  await assert.rejects(register(ctx, impostor), /already registered with different keys/);
+});
+
+test('a registration is refused unless both keys signed it and the ID matches the key', async () => {
+  const ctx = makeCtx();
+  const phone = makePhone('victim');
+  const other = makePhone('other');
+  const payload = registerPayload(phone);
+  const reg = (overrides) => {
+    const a = { ...phone, edSig: phone.edSign(payload), anchorSig: phone.sign(payload), ...overrides };
+    return ledger.RegisterNode(ctx, a.nodeId, a.edPub, a.xPub, a.address, a.edSig, a.anchorSig);
+  };
+  await assert.rejects(reg({ nodeId: other.nodeId }), /does not match the Ed25519 public key/);
+  await assert.rejects(reg({ edSig: other.edSign(payload) }), /Ed25519 signature/);
+  await assert.rejects(reg({ edSig: 'AAAA' }), /Ed25519 signature/);
+  await assert.rejects(reg({ anchorSig: other.sign(payload) }), /Anchoring signature/);
+  await assert.rejects(reg({ xPub: other.xPub }), /Ed25519 signature/); // the payload covers every key
+  await assert.rejects(reg({ address: 'xyz' }), /Anchoring address/);
+  await assert.rejects(register(makeCtx({ msp: 'Org2MSP' }), phone), /Only Org1MSP may register nodes/);
+});
+
+test('the victim sets guardians with a growing sequence, signed by their anchoring key', async () => {
+  const ctx = makeCtx();
+  const [victim, g1, g2] = ['victim', 'g1', 'g2'].map(makePhone);
+  for (const p of [victim, g1, g2]) await register(ctx, p);
+
+  const ids = [g2.nodeId, g1.nodeId];
+  const set = (seq, list, signer = victim) =>
+    ledger.SetGuardians(ctx, victim.nodeId, JSON.stringify(list), String(seq), signer.sign(guardiansPayload(victim, seq, list)));
+
+  const record = JSON.parse(await set(1, ids));
+  assert.deepEqual(record.guardians, [...ids].sort());
+  assert.equal(record.sequence, 1);
+  assert.deepEqual(JSON.parse(await ledger.GetGuardians(ctx, victim.nodeId)), { found: true, ...record });
+
+  await assert.rejects(set(1, [g1.nodeId]), /sequence must be greater than 1/); // replay of an old number
+  await assert.rejects(set(2, [g1.nodeId], g1), /not from the victim/);
+  assert.deepEqual(JSON.parse(await set(2, [g1.nodeId])).guardians, [g1.nodeId]);
+
+  await assert.rejects(set(3, [makePhone('stranger').nodeId]), /Guardian .* is not a registered node/);
+  await assert.rejects(set(3, [victim.nodeId]), /own guardian/);
+  await assert.rejects(set(3, [g1.nodeId, g1.nodeId]), /duplicates/);
+  await assert.rejects(ledger.SetGuardians(ctx, victim.nodeId, 'not json', '3', victim.sign('x')), /JSON array/);
+  const unregistered = makePhone('unregistered');
+  await assert.rejects(
+    ledger.SetGuardians(ctx, unregistered.nodeId, '[]', '1', unregistered.sign(guardiansPayload(unregistered, 1, []))),
+    /Victim .* is not a registered node/,
+  );
+});
+
+/** A registered victim with an anchored clip, and SimPolice registered as an authority. */
+async function sharingSetup() {
+  const world = { state: new Map(), privateData: new Map() };
+  const gateway = makeCtx({ world });
+  const victim = makePhone('victim');
+  await register(gateway, victim);
+  await ledger.AnchorEvidence(gateway, HASH, CID, '1', victim.nodeId, victim.signHash(HASH));
+  await ledger.RegisterAuthority(makeCtx({ world, attrs: { 'hf.Type': 'admin' } }),
+    'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true');
+  const sealedShare = nodeCrypto.randomBytes(61).toString('base64');
+  return { world, victim, sealedShare };
+}
+
+function shareConsent(victim, { hash = HASH, msp = 'SimPoliceMSP', x = 3, t = 2, sealedShare }) {
+  const shareHash = sha256Hex(Buffer.from(sealedShare, 'base64'));
+  return victim.sign(`justice-chain/share-with-authority/v1|${hash}|${msp}|${x}|${t}|${shareHash}`);
+}
+
+function share(world, victim, sealedShare, { msp = 'SimPoliceMSP', x = 3, t = 2, consent, submitter = 'Org1MSP' } = {}) {
+  const ctx = makeCtx({ world, msp: submitter, transient: new Map([['sealedShare', Buffer.from(sealedShare)]]) });
+  const signature = consent ?? shareConsent(victim, { msp, x, t, sealedShare });
+  return { ctx, result: ledger.ShareWithAuthority(ctx, HASH, msp, String(x), String(t), signature) };
+}
+
+test('the victim shares one sealed piece: private data for SimPolice, only consent and hash in public', async () => {
+  const { world, victim, sealedShare } = await sharingSetup();
+  const { ctx, result } = share(world, victim, sealedShare);
+  const consent = JSON.parse(await result);
+
+  assert.equal(consent.manifestHash, HASH);
+  assert.equal(consent.authorityMsp, 'SimPoliceMSP');
+  assert.equal(consent.victimNodeId, victim.nodeId);
+  assert.equal(consent.shareHash, sha256Hex(Buffer.from(sealedShare, 'base64')));
+  assert.equal(ctx.events[0].name, 'SharedWithAuthority');
+
+  // The sealed piece is only in SimPolice's collection, never in public state or the event.
+  const piece = JSON.parse(world.privateData.get(`authorityShares_SimPolice/${HASH}`).toString());
+  assert.equal(piece.sealedShare, sealedShare);
+  assert.equal(piece.senderX25519PublicKey, victim.xPub);
+  assert.equal(piece.shareX, 3);
+  assert.equal(piece.threshold, 2);
+  const publicText = [...world.state.values()].map((v) => v.toString()).join('\n') + ctx.events[0].payload;
+  assert.equal(publicText.includes(sealedShare), false);
+
+  assert.deepEqual(JSON.parse(await ledger.ListAuthorityShares(makeCtx({ world }), 'SimPoliceMSP')), [consent]);
+  await assert.rejects(share(world, victim, sealedShare).result, /already shared with SimPoliceMSP/);
+});
+
+test('sharing is refused without consent for exactly this piece, index and authority', async () => {
+  const { world, victim, sealedShare } = await sharingSetup();
+  const swapped = nodeCrypto.randomBytes(61).toString('base64');
+
+  // Consent signed for another piece, another authority, another index, or by someone else.
+  await assert.rejects(
+    share(world, victim, swapped, { consent: shareConsent(victim, { sealedShare }) }).result, /Consent is not signed/);
+  await assert.rejects(
+    share(world, victim, sealedShare, { consent: shareConsent(victim, { msp: 'OtherMSP', sealedShare }) }).result,
+    /Consent is not signed/);
+  await assert.rejects(
+    share(world, victim, sealedShare, { consent: shareConsent(victim, { x: 4, sealedShare }) }).result, /Consent is not signed/);
+  await assert.rejects(
+    share(world, victim, sealedShare, { consent: shareConsent(makePhone('other'), { sealedShare }) }).result,
+    /Consent is not signed/);
+
+  await assert.rejects(share(world, victim, 'AAAA').result, /Transient sealedShare/);
+  await assert.rejects(share(world, victim, sealedShare, { submitter: 'SimPoliceMSP' }).result, /Only Org1MSP may share/);
+  await assert.rejects(share(world, victim, sealedShare, { msp: 'NobodyMSP' }).result, /not an active registered authority/);
+  await assert.rejects(share(world, victim, sealedShare, { x: 0 }).result, /shareX/);
+  assert.equal(world.privateData.size, 0);
+});
+
+test('sharing needs an anchored clip from the same registered victim and an active authority', async () => {
+  const { world, victim, sealedShare } = await sharingSetup();
+
+  const gateway = makeCtx({ world });
+  const ctxFor = () => makeCtx({ world, transient: new Map([['sealedShare', Buffer.from(sealedShare)]]) });
+  const consentFor = (hash) => victim.sign(
+    `justice-chain/share-with-authority/v1|${hash}|SimPoliceMSP|3|2|${sha256Hex(Buffer.from(sealedShare, 'base64'))}`);
+
+  // A clip nobody anchored.
+  await assert.rejects(
+    ledger.ShareWithAuthority(ctxFor(), OTHER_HASH, 'SimPoliceMSP', '3', '2', consentFor(OTHER_HASH)), /not anchored/);
+
+  // A clip anchored under the victim's node ID but signed by another key.
+  const thirdHash = 'bb'.repeat(32);
+  await ledger.AnchorEvidence(gateway, thirdHash, CID, '1', victim.nodeId, makePhone('thief').signHash(thirdHash));
+  await assert.rejects(
+    ledger.ShareWithAuthority(ctxFor(), thirdHash, 'SimPoliceMSP', '3', '2', consentFor(thirdHash)),
+    /not anchored by its node.s registered key/);
+
+  // A revoked authority.
+  await ledger.RevokeAuthority(makeCtx({ world, attrs: { 'hf.Type': 'admin' } }), 'SimPoliceMSP');
+  await assert.rejects(share(world, victim, sealedShare).result, /not an active registered authority/);
+});
+
+test('only an officer of the authority reads the shared piece', async () => {
+  const { world, victim, sealedShare } = await sharingSetup();
+  await share(world, victim, sealedShare).result;
+
+  const officer = makeCtx({ world, msp: 'SimPoliceMSP', attrs: { role: 'officer' } });
+  const piece = JSON.parse(await ledger.GetAuthorityShare(officer, HASH));
+  assert.equal(piece.found, true);
+  assert.equal(piece.sealedShare, sealedShare);
+  assert.deepEqual(JSON.parse(await ledger.GetAuthorityShare(officer, OTHER_HASH)), { found: false, manifestHash: OTHER_HASH });
+
+  const outsiders = [
+    makeCtx({ world, msp: 'SimPoliceMSP', attrs: { role: 'supervisor' } }),
+    makeCtx({ world, msp: 'SimPoliceMSP' }),
+    makeCtx({ world, msp: 'Org2MSP', attrs: { role: 'officer' } }),
+    makeCtx({ world, msp: 'Org1MSP', attrs: { 'hf.Type': 'admin' } }),
+  ];
+  for (const ctx of outsiders) {
+    await assert.rejects(ledger.GetAuthorityShare(ctx, HASH), /Only an officer of an active registered authority/);
+  }
 });

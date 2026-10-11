@@ -1,0 +1,14 @@
+[
+  {
+    "name": "authorityShares_SimPolice",
+    "policy": "OR('Org1MSP.member', 'SimPoliceMSP.member')",
+    "requiredPeerCount": 0,
+    "maxPeerCount": 1,
+    "blockToLive": 0,
+    "memberOnlyRead": true,
+    "memberOnlyWrite": true,
+    "endorsementPolicy": {
+      "signaturePolicy": "AND('Org1MSP.peer', 'SimPoliceMSP.peer')"
+    }
+  }
+]
