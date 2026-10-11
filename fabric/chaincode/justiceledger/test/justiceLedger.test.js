@@ -4,6 +4,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const nodeCrypto = require('crypto');
 const JusticeLedger = require('../lib/justiceLedger');
 
 // Produced by the app's own signing code (AnchoringService.signAnchor) with
@@ -30,7 +31,8 @@ function makeCtx({
   const { state, privateData } = world;
   const events = [];
   const validation = new Map();
-  let txCount = 0;
+  // One ID per context: every call within a transaction sees the same one.
+  const txId = nodeCrypto.randomBytes(32).toString('hex');
   const stub = {
     createCompositeKey: (type, attrs) => `\u0000${type}\u0000${attrs.join('\u0000')}\u0000`,
     getState: async (key) => state.get(key) ?? Buffer.alloc(0),
@@ -38,8 +40,21 @@ function makeCtx({
     getPrivateData: async (collection, key) => privateData.get(`${collection}/${key}`) ?? Buffer.alloc(0),
     putPrivateData: async (collection, key, value) => { privateData.set(`${collection}/${key}`, Buffer.from(value)); },
     getTransient: () => transient,
+    getPrivateDataByPartialCompositeKey: async (collection, type, attrs) => {
+      const prefix = `${collection}/\u0000${type}\u0000${attrs.map((a) => `${a}\u0000`).join('')}`;
+      const rows = [...privateData.keys()].filter((k) => k.startsWith(prefix)).sort()
+        .map((k) => ({ key: k, value: privateData.get(k) }));
+      let i = 0;
+      // Like fabric-shim: private-data queries resolve to {iterator}.
+      return {
+        iterator: {
+          next: async () => (i < rows.length ? { value: rows[i++], done: false } : { done: true }),
+          close: async () => {},
+        },
+      };
+    },
     getTxTimestamp: () => ({ seconds: { toString: () => String(stub.seconds) }, nanos: stub.nanos }),
-    getTxID: () => `tx${++txCount}`,
+    getTxID: () => txId,
     setEvent: (name, payload) => events.push({ name, payload: payload.toString() }),
     setStateValidationParameter: async (key, policy) => { validation.set(key, Buffer.from(policy)); },
     getStateByPartialCompositeKey: async (type, attrs) => {
@@ -263,7 +278,6 @@ test('GetAuthority and ListAuthorities are readable by any member and list only 
 
 // --- Node registration, guardians, sharing with an authority ----------------
 
-const nodeCrypto = require('crypto');
 const { Wallet, getBytes } = require('ethers');
 
 const sha256Hex = (data) => nodeCrypto.createHash('sha256').update(data).digest('hex');
@@ -484,6 +498,176 @@ test('only an officer of the authority reads the shared piece', async () => {
     makeCtx({ world, msp: 'Org1MSP', attrs: { 'hf.Type': 'admin' } }),
   ];
   for (const ctx of outsiders) {
-    await assert.rejects(ledger.GetAuthorityShare(ctx, HASH), /Only an officer of an active registered authority/);
+    await assert.rejects(ledger.GetAuthorityShare(ctx, HASH), /Only an active registered authority's officer may do this/);
   }
+});
+
+// --- Access requests, releases and the audit trail --------------------------
+
+const OFFICER = {
+  msp: 'SimPoliceMSP',
+  attrs: { role: 'officer' },
+  id: 'x509::/C=IN/O=SimPolice (SIMULATED)/OU=client/CN=officer1::/C=IN/CN=ca.simpolice.example.com',
+};
+const SUPERVISOR = {
+  msp: 'SimPoliceMSP',
+  attrs: { role: 'supervisor' },
+  id: 'x509::/C=IN/O=SimPolice (SIMULATED)/OU=client/CN=supervisor1::/C=IN/CN=ca.simpolice.example.com',
+};
+
+/**
+ * A clip shared with SimPolice (piece 3), a victim with guardian g1, and a
+ * registered stranger. Every call gets its own context and a later
+ * transaction time, like separate transactions on the channel.
+ */
+async function custodySetup() {
+  const { world, victim, sealedShare } = await sharingSetup();
+  let seconds = 1791400100;
+  const as = (who = {}, transient) => makeCtx({ world, seconds: seconds++, ...who, transient });
+  const [g1, g2, stranger] = ['g1', 'g2', 'stranger'].map(makePhone);
+  for (const p of [g1, g2, stranger]) await register(as(), p);
+  await ledger.SetGuardians(as(), victim.nodeId, JSON.stringify([g1.nodeId, g2.nodeId]), '1',
+    victim.sign(guardiansPayload(victim, 1, [g1.nodeId, g2.nodeId])));
+  await share(world, victim, sealedShare).result;
+  return { world, as, victim, g1, g2, stranger };
+}
+
+function releaseSignature(releaser, request, x, pieceHash) {
+  return releaser.sign(
+    `justice-chain/release-share/v1|${request.requestId}|${request.manifestHash}|${request.authorityMsp}|${x}|${pieceHash}`);
+}
+
+/** Signs and submits a release, then delivers the piece, like the gateway's POST /releases. */
+async function release(as, request, releaser, x, { signer = releaser, piece } = {}) {
+  const sealed = piece ?? nodeCrypto.randomBytes(61).toString('base64');
+  const pieceHash = sha256Hex(Buffer.from(sealed, 'base64'));
+  const approved = JSON.parse(await ledger.ReleaseShare(as(), request.requestId, releaser.nodeId, String(x), pieceHash,
+    releaseSignature(signer, request, x, pieceHash)));
+  const delivery = JSON.parse(await ledger.DeliverReleasedShare(
+    as({}, new Map([['sealedShare', Buffer.from(sealed)]])), request.requestId));
+  return { approved, delivery, sealed };
+}
+
+test('an officer requests access to a shared clip; JusticeChain and the Auditor must endorse any change', async () => {
+  const { as, victim } = await custodySetup();
+  const ctx = as(OFFICER);
+  const request = JSON.parse(await ledger.RequestAccess(ctx, HASH, 'Assault report, demo case', 'DEMO-001'));
+  assert.equal(request.status, 'open');
+  assert.equal(request.requestedBy, 'officer1');
+  assert.equal(request.victimNodeId, victim.nodeId);
+  assert.equal(request.heldShareX, 3);
+  assert.equal(request.requestId, ctx.stub.getTxID());
+
+  const key = ctx.stub.createCompositeKey('accessRequest', [request.requestId]);
+  assert.deepEqual(new KeyEndorsementPolicy(ctx.validation.get(key)).listOrgs().sort(), ['Org1MSP', 'Org2MSP']);
+  assert.deepEqual(JSON.parse(await ledger.ListAccessRequests(as(), victim.nodeId)), [request]);
+  assert.deepEqual(JSON.parse(await ledger.GetAccessRequest(as(), request.requestId)), { found: true, ...request });
+});
+
+test('only an officer may request, and only for a clip shared with their authority', async () => {
+  const { as } = await custodySetup();
+  for (const who of [SUPERVISOR, {}, { msp: 'Org2MSP', attrs: { role: 'officer' } }]) {
+    await assert.rejects(ledger.RequestAccess(as(who), HASH, 'reason', 'REF'), /officer may do this/);
+  }
+  await assert.rejects(ledger.RequestAccess(as(OFFICER), OTHER_HASH, 'reason', 'REF'), /not shared with SimPoliceMSP/);
+  await assert.rejects(ledger.RequestAccess(as(OFFICER), HASH, ' ', 'REF'), /reason/);
+  await assert.rejects(ledger.RequestAccess(as(OFFICER), HASH, 'reason', ''), /caseRef/);
+});
+
+test('a registered guardian releases their own piece; the officer then holds two pieces', async () => {
+  const { as, world, g1 } = await custodySetup();
+  const request = JSON.parse(await ledger.RequestAccess(as(OFFICER), HASH, 'reason', 'DEMO-002'));
+  const { approved, delivery, sealed } = await release(as, request, g1, 1);
+
+  assert.equal(approved.status, 'released');
+  assert.equal(approved.releaserRole, 'guardian');
+  assert.equal(approved.releasedBy, g1.nodeId);
+  assert.equal(approved.releasedShareX, 1);
+  assert.equal(delivery.shareHash, approved.releasedShareHash);
+  // The approval and the public state never carry the piece itself.
+  assert.equal([...world.state.values()].some((v) => v.toString().includes(sealed)), false);
+
+  const pieces = JSON.parse(await ledger.GetAuthorityShare(as(OFFICER), HASH));
+  assert.equal(pieces.shareX, 3);
+  assert.equal(pieces.released.length, 1);
+  assert.equal(pieces.released[0].shareX, 1);
+  assert.equal(pieces.released[0].sealedShare, sealed);
+  assert.equal(pieces.released[0].senderX25519PublicKey, g1.xPub);
+  assert.equal(pieces.released[0].releaserRole, 'guardian');
+});
+
+test('the victim can release instead, with a new piece', async () => {
+  const { as, victim } = await custodySetup();
+  const request = JSON.parse(await ledger.RequestAccess(as(OFFICER), HASH, 'reason', 'DEMO-003'));
+  const { approved } = await release(as, request, victim, 4);
+  assert.equal(approved.releaserRole, 'victim');
+  const pieces = JSON.parse(await ledger.GetAuthorityShare(as(OFFICER), HASH));
+  assert.equal(pieces.released[0].senderX25519PublicKey, victim.xPub);
+});
+
+test('a release needs a valid signature from the victim or a registered guardian, sent by JusticeChain', async () => {
+  const { as, g1, g2, stranger } = await custodySetup();
+  const request = JSON.parse(await ledger.RequestAccess(as(OFFICER), HASH, 'reason', 'DEMO-004'));
+  const pieceHash = sha256Hex(nodeCrypto.randomBytes(61));
+  const tryRelease = (who, releaser, x, signer = releaser) => ledger.ReleaseShare(
+    as(who), request.requestId, releaser.nodeId, String(x), pieceHash, releaseSignature(signer, request, x, pieceHash));
+
+  // The officer can't approve their own request, nor can the Auditor.
+  await assert.rejects(tryRelease(OFFICER, g1, 1), /Only Org1MSP may release/);
+  await assert.rejects(tryRelease({ msp: 'Org2MSP' }, g1, 1), /Only Org1MSP may release/);
+  // A registered node that isn't a guardian, a guardian ID with someone else's signature.
+  await assert.rejects(tryRelease({}, stranger, 1), /Only the victim or one of their registered guardians/);
+  await assert.rejects(tryRelease({}, g1, 1, g2), /not signed by the releaser/);
+  // A signature for another piece index.
+  await assert.rejects(
+    ledger.ReleaseShare(as(), request.requestId, g1.nodeId, '2', pieceHash, releaseSignature(g1, request, 1, pieceHash)),
+    /not signed by the releaser/);
+  // The piece SimPolice already holds.
+  await assert.rejects(tryRelease({}, g1, 3), /already holds piece 3/);
+  await assert.rejects(
+    ledger.ReleaseShare(as(), 'ab'.repeat(32), g1.nodeId, '1', pieceHash, releaseSignature(g1, request, 1, pieceHash)),
+    /not found/);
+
+  const ok = JSON.parse(await tryRelease({}, g1, 1));
+  assert.equal(ok.status, 'released');
+  await assert.rejects(tryRelease({}, g2, 2), /already released/);
+});
+
+test('only the approved piece is delivered, once', async () => {
+  const { as, g1 } = await custodySetup();
+  const request = JSON.parse(await ledger.RequestAccess(as(OFFICER), HASH, 'reason', 'DEMO-005'));
+  const piece = nodeCrypto.randomBytes(61).toString('base64');
+  const deliver = (sealed, who = {}) => ledger.DeliverReleasedShare(
+    as(who, new Map([['sealedShare', Buffer.from(sealed)]])), request.requestId);
+
+  await assert.rejects(deliver(piece), /has not been released/);
+  const pieceHash = sha256Hex(Buffer.from(piece, 'base64'));
+  await ledger.ReleaseShare(as(), request.requestId, g1.nodeId, '1', pieceHash, releaseSignature(g1, request, 1, pieceHash));
+  await assert.rejects(deliver(nodeCrypto.randomBytes(61).toString('base64')), /does not match the one that was released/);
+  await assert.rejects(deliver(piece, OFFICER), /Only Org1MSP may deliver/);
+  await deliver(piece);
+  await assert.rejects(deliver(piece), /already delivered/);
+});
+
+test('the audit trail records shared, requested, released and opened, readable by JusticeChain, the Auditor and a supervisor', async () => {
+  const { as, g1 } = await custodySetup();
+  await assert.rejects(ledger.RecordAccess(as(OFFICER), HASH, 'opened', ''), /No released access request/);
+
+  const request = JSON.parse(await ledger.RequestAccess(as(OFFICER), HASH, 'Assault report', 'DEMO-006'));
+  await release(as, request, g1, 1);
+  await ledger.RecordAccess(as(OFFICER), HASH, 'opened', 'Viewed in the officer portal');
+  await assert.rejects(ledger.RecordAccess(as(OFFICER), HASH, 'deleted', ''), /action must be one of/);
+  await assert.rejects(ledger.RecordAccess(as(SUPERVISOR), HASH, 'opened', ''), /officer may do this/);
+
+  for (const reader of [{}, { msp: 'Org2MSP' }, SUPERVISOR]) {
+    const trail = JSON.parse(await ledger.GetAuditTrail(as(reader), HASH));
+    assert.deepEqual(trail.map((e) => e.event), ['shared', 'requested', 'released', 'opened']);
+  }
+  const trail = JSON.parse(await ledger.GetAuditTrail(as({ msp: 'Org2MSP' }), HASH));
+  assert.equal(trail[1].actor.name, 'officer1');
+  assert.equal(trail[1].detail.caseRef, 'DEMO-006');
+  assert.deepEqual(trail[2].actor, { nodeId: g1.nodeId, role: 'guardian' });
+  assert.equal(trail[3].detail.note, 'Viewed in the officer portal');
+
+  await assert.rejects(ledger.GetAuditTrail(as(OFFICER), HASH), /supervisor may do this/);
 });

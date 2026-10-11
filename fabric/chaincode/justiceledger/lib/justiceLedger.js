@@ -38,6 +38,10 @@ const SEALED_SHARE_BYTES = 12 + 16 + 1 + 32;
 const ACTION_REGISTER_NODE = 'justice-chain/register-node/v1';
 const ACTION_SET_GUARDIANS = 'justice-chain/set-guardians/v1';
 const ACTION_SHARE_WITH_AUTHORITY = 'justice-chain/share-with-authority/v1';
+const ACTION_RELEASE_SHARE = 'justice-chain/release-share/v1';
+
+// What an officer may record after opening a clip.
+const ACCESS_ACTIONS = ['opened', 'exported'];
 
 // DER prefix that turns a raw 32-byte Ed25519 key into an SPKI key.
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -91,6 +95,89 @@ function verifyEd25519(publicKeyB64, payload, signatureB64) {
 async function readJson(ctx, key) {
   const data = await ctx.stub.getState(key);
   return data && data.length > 0 ? JSON.parse(data.toString('utf8')) : null;
+}
+
+/** The common name in the caller's certificate, e.g. "officer1". */
+function callerName(ctx) {
+  const subject = String(ctx.clientIdentity.getID()).split('::')[1] || '';
+  const match = /CN=([^/,]+)/.exec(subject);
+  return match ? match[1] : 'unknown';
+}
+
+/**
+ * The caller must hold [role] in an active registered authority; returns
+ * that authority's MSP ID, private collection and the caller's name.
+ */
+async function requireAuthorityRole(ctx, role) {
+  const msp = ctx.clientIdentity.getMSPID();
+  const authority = await readJson(ctx, ctx.stub.createCompositeKey('authority', [msp]));
+  if (!authority || authority.revoked || ctx.clientIdentity.getAttributeValue('role') !== role) {
+    throw new Error(`Only an active registered authority's ${role} may do this`);
+  }
+  const collection = AUTHORITY_COLLECTIONS[msp];
+  if (!collection) {
+    throw new Error(`${msp} has no private collection on this channel`);
+  }
+  return { msp, collection, name: callerName(ctx) };
+}
+
+/** Both JusticeChainOrg and the Auditor must endorse any later write to [key]. */
+async function requireRegistryEndorsement(ctx, key) {
+  const policy = new KeyEndorsementPolicy();
+  policy.addOrgs('PEER', ...REGISTRY_MSPS);
+  await ctx.stub.setStateValidationParameter(key, policy.getPolicy());
+}
+
+/**
+ * Appends one chain-of-custody entry for a clip. Entries are keyed by
+ * transaction time, so the trail reads in the order things happened, and
+ * no function ever overwrites or deletes one.
+ */
+async function appendAudit(ctx, manifestHash, event, actor, detail) {
+  const time = txTime(ctx);
+  const entry = { manifestHash, event, actor, detail, at: time.seconds, txId: ctx.stub.getTxID() };
+  await ctx.stub.putState(
+    ctx.stub.createCompositeKey('audit', [manifestHash, time.sortKey, ctx.stub.getTxID()]),
+    Buffer.from(JSON.stringify(entry)),
+  );
+}
+
+/**
+ * Every value from a range query. fabric-shim's private-data queries
+ * resolve to {iterator}, unlike the public-state ones, which resolve to the
+ * iterator itself; both are accepted.
+ */
+async function readAll(result) {
+  const iterator = result.iterator || result;
+  const rows = [];
+  try {
+    let result = await iterator.next();
+    while (!result.done) {
+      rows.push(result.value.value);
+      result = await iterator.next();
+    }
+  } finally {
+    await iterator.close();
+  }
+  return rows;
+}
+
+function readSealedShareFromTransient(ctx) {
+  const transient = ctx.stub.getTransient();
+  const text = transient && transient.get('sealedShare')
+    ? Buffer.from(transient.get('sealedShare')).toString('utf8') : '';
+  const sealed = Buffer.from(text, 'base64');
+  if (sealed.length !== SEALED_SHARE_BYTES || sealed.toString('base64') !== text) {
+    throw new Error(`Transient sealedShare must be a base64 ${SEALED_SHARE_BYTES}-byte sealed piece`);
+  }
+  return { text, hash: sha256Hex(sealed) };
+}
+
+function normaliseShareX(value) {
+  if (!/^\d{1,3}$/.test(String(value)) || Number(value) < 1 || Number(value) > 255) {
+    throw new Error('shareX must be 1-255');
+  }
+  return Number(value);
 }
 
 async function requireNode(ctx, nodeId, label) {
@@ -526,23 +613,13 @@ class JusticeLedger extends Contract {
       throw new Error('The evidence was not anchored by its node\'s registered key');
     }
 
-    if (!/^\d{1,3}$/.test(String(shareX)) || Number(shareX) < 1 || Number(shareX) > 255) {
-      throw new Error('shareX must be 1-255');
-    }
+    const x = normaliseShareX(shareX);
     if (!/^\d$/.test(String(threshold)) || Number(threshold) < 1) {
       throw new Error('threshold must be a small positive integer');
     }
-    const x = Number(shareX);
     const t = Number(threshold);
 
-    const transient = ctx.stub.getTransient();
-    const sealedText = transient && transient.get('sealedShare')
-      ? Buffer.from(transient.get('sealedShare')).toString('utf8') : '';
-    const sealed = Buffer.from(sealedText, 'base64');
-    if (sealed.length !== SEALED_SHARE_BYTES || sealed.toString('base64') !== sealedText) {
-      throw new Error(`Transient sealedShare must be a base64 ${SEALED_SHARE_BYTES}-byte sealed piece`);
-    }
-    const shareHash = sha256Hex(sealed);
+    const { text: sealedText, hash: shareHash } = readSealedShareFromTransient(ctx);
 
     const payload = `${ACTION_SHARE_WITH_AUTHORITY}|${hash}|${msp}|${x}|${t}|${shareHash}`;
     if (recoverActionSigner(payload, anchoringSignature) !== victim.anchoringAddress) {
@@ -580,6 +657,7 @@ class JusticeLedger extends Contract {
       txId: ctx.stub.getTxID(),
     };
     await ctx.stub.putState(consentKey, Buffer.from(JSON.stringify(consent)));
+    await appendAudit(ctx, hash, 'shared', { nodeId: victim.nodeId, role: 'victim' }, { authorityMsp: msp, shareX: x });
     ctx.stub.setEvent('SharedWithAuthority', Buffer.from(JSON.stringify(consent)));
     return JSON.stringify(consent);
   }
@@ -602,27 +680,247 @@ class JusticeLedger extends Contract {
   }
 
   /**
-   * An officer reads their authority's sealed piece for one clip. Only an
-   * officer of an active authority may read, and only their own
-   * collection; a peer outside the collection (e.g. the Auditor's) has no
-   * copy to return. The piece is still sealed to the desk key.
+   * An officer reads their authority's pieces for one clip: the one the
+   * victim shared, plus any released later. Only an officer of an active
+   * authority may read, and only their own collection; a peer outside the
+   * collection (e.g. the Auditor's) has no copy to return. Every piece is
+   * still sealed to the desk key.
    */
   async GetAuthorityShare(ctx, manifestHash) {
-    const msp = ctx.clientIdentity.getMSPID();
-    const authority = await readJson(ctx, ctx.stub.createCompositeKey('authority', [msp]));
-    if (!authority || authority.revoked || ctx.clientIdentity.getAttributeValue('role') !== 'officer') {
-      throw new Error('Only an officer of an active registered authority may read shared pieces');
-    }
-    const collection = AUTHORITY_COLLECTIONS[msp];
-    if (!collection) {
-      throw new Error(`${msp} has no private collection on this channel`);
-    }
+    const { collection } = await requireAuthorityRole(ctx, 'officer');
     const hash = normaliseHex(manifestHash, 64, 'Manifest hash');
     const data = await ctx.stub.getPrivateData(collection, hash);
     if (!data || data.length === 0) {
       return JSON.stringify({ found: false, manifestHash: hash });
     }
-    return JSON.stringify({ found: true, ...JSON.parse(data.toString('utf8')) });
+    const released = (await readAll(
+      await ctx.stub.getPrivateDataByPartialCompositeKey(collection, 'release', [hash]),
+    )).map((value) => JSON.parse(value.toString('utf8')));
+    return JSON.stringify({ found: true, ...JSON.parse(data.toString('utf8')), released });
+  }
+
+  /**
+   * An officer asks for access to a clip their authority holds one piece
+   * of. The request only records the reason; access comes from a release
+   * (ReleaseShare), which only the victim or one of their guardians can
+   * sign. Both JusticeChainOrg and the Auditor must endorse any change to
+   * the request, so SimPolice can't mark its own request approved.
+   */
+  async RequestAccess(ctx, manifestHash, reason, caseRef) {
+    const officer = await requireAuthorityRole(ctx, 'officer');
+    const hash = normaliseHex(manifestHash, 64, 'Manifest hash');
+    const why = String(reason ?? '').trim();
+    const ref = String(caseRef ?? '').trim();
+    if (why.length === 0 || why.length > 300) {
+      throw new Error('reason must be 1-300 characters');
+    }
+    if (ref.length === 0 || ref.length > 64) {
+      throw new Error('caseRef must be 1-64 characters');
+    }
+    const consent = await readJson(ctx, ctx.stub.createCompositeKey('authorityShare', [officer.msp, hash]));
+    if (!consent) {
+      throw new Error(`This clip was not shared with ${officer.msp}`);
+    }
+
+    const requestId = ctx.stub.getTxID();
+    const time = txTime(ctx);
+    const request = {
+      requestId,
+      manifestHash: hash,
+      authorityMsp: officer.msp,
+      victimNodeId: consent.victimNodeId,
+      heldShareX: consent.shareX,
+      threshold: consent.threshold,
+      requestedBy: officer.name,
+      reason: why,
+      caseRef: ref,
+      status: 'open',
+      requestedAt: time.seconds,
+    };
+    const key = ctx.stub.createCompositeKey('accessRequest', [requestId]);
+    await ctx.stub.putState(key, Buffer.from(JSON.stringify(request)));
+    await requireRegistryEndorsement(ctx, key);
+    await ctx.stub.putState(
+      ctx.stub.createCompositeKey('requestByVictim', [consent.victimNodeId, time.sortKey, requestId]),
+      Buffer.from(requestId),
+    );
+    await ctx.stub.putState(
+      ctx.stub.createCompositeKey('requestByClip', [officer.msp, hash, requestId]),
+      Buffer.from(requestId),
+    );
+    await appendAudit(ctx, hash, 'requested', { msp: officer.msp, name: officer.name, role: 'officer' },
+      { requestId, reason: why, caseRef: ref });
+    ctx.stub.setEvent('AccessRequested', Buffer.from(JSON.stringify(request)));
+    return JSON.stringify(request);
+  }
+
+  /** One access request, or found: false. */
+  async GetAccessRequest(ctx, requestId) {
+    const id = normaliseHex(requestId, 64, 'Request ID');
+    const request = await readJson(ctx, ctx.stub.createCompositeKey('accessRequest', [id]));
+    return JSON.stringify(request ? { found: true, ...request } : { found: false, requestId: id });
+  }
+
+  /** Every access request for one victim's clips, oldest first (for the victim's and guardians' apps). */
+  async ListAccessRequests(ctx, victimNodeId) {
+    const victim = normaliseHex(victimNodeId, 16, 'Victim node ID');
+    const ids = await readAll(await ctx.stub.getStateByPartialCompositeKey('requestByVictim', [victim]));
+    const requests = [];
+    for (const id of ids) {
+      requests.push(await readJson(ctx, ctx.stub.createCompositeKey('accessRequest', [id.toString('utf8')])));
+    }
+    return JSON.stringify(requests);
+  }
+
+  /**
+   * Approves a request by releasing a key piece: either the victim (a new
+   * piece, EvidenceEncryptor.issueGuardianShare) or one of their registered
+   * guardians (their own piece, re-sealed with sealShare). The releaser
+   * signs the request, the piece's index and the hash of the sealed piece
+   * with their registered anchoring key. This transaction carries only that
+   * hash; the piece itself follows in DeliverReleasedShare, so the Auditor,
+   * who must co-endorse this approval, never receives the piece.
+   */
+  async ReleaseShare(ctx, requestId, releaserNodeId, shareX, shareHash, signature) {
+    requireSubmitter(ctx, ANCHORING_MSP, 'release key pieces');
+    const id = normaliseHex(requestId, 64, 'Request ID');
+    const key = ctx.stub.createCompositeKey('accessRequest', [id]);
+    const request = await readJson(ctx, key);
+    if (!request) {
+      throw new Error('Access request not found');
+    }
+    if (request.status !== 'open') {
+      throw new Error(`Access request is already ${request.status}`);
+    }
+    const authority = await readJson(ctx, ctx.stub.createCompositeKey('authority', [request.authorityMsp]));
+    if (!authority || authority.revoked) {
+      throw new Error(`${request.authorityMsp} is not an active registered authority`);
+    }
+
+    const releaser = await requireNode(ctx, normaliseHex(releaserNodeId, 16, 'Releaser node ID'), 'Releaser');
+    let role = null;
+    if (releaser.nodeId === request.victimNodeId) {
+      role = 'victim';
+    } else {
+      const guardians = await readJson(ctx, ctx.stub.createCompositeKey('guardians', [request.victimNodeId]));
+      if (guardians && guardians.guardians.includes(releaser.nodeId)) role = 'guardian';
+    }
+    if (!role) {
+      throw new Error('Only the victim or one of their registered guardians may release a piece');
+    }
+
+    const x = normaliseShareX(shareX);
+    if (x === request.heldShareX) {
+      throw new Error(`${request.authorityMsp} already holds piece ${x}`);
+    }
+    const pieceHash = normaliseHex(shareHash, 64, 'Share hash');
+    const payload = `${ACTION_RELEASE_SHARE}|${id}|${request.manifestHash}|${request.authorityMsp}|${x}|${pieceHash}`;
+    if (recoverActionSigner(payload, signature) !== releaser.anchoringAddress) {
+      throw new Error('Release is not signed by the releaser\'s registered anchoring key');
+    }
+
+    const time = txTime(ctx);
+    const updated = {
+      ...request,
+      status: 'released',
+      releasedBy: releaser.nodeId,
+      releaserRole: role,
+      releasedShareX: x,
+      releasedShareHash: pieceHash,
+      releaseSignature: normaliseHex(signature, 130, 'Signature'),
+      releasedAt: time.seconds,
+    };
+    await ctx.stub.putState(key, Buffer.from(JSON.stringify(updated)));
+    await appendAudit(ctx, request.manifestHash, 'released', { nodeId: releaser.nodeId, role },
+      { requestId: id, authorityMsp: request.authorityMsp, shareX: x });
+    ctx.stub.setEvent('ShareReleased', Buffer.from(JSON.stringify(updated)));
+    return JSON.stringify(updated);
+  }
+
+  /**
+   * Delivers the piece a ReleaseShare approved, as transient data, into
+   * the authority's private collection. It must hash to exactly the piece
+   * the releaser signed and the Auditor co-approved, and each release is
+   * delivered once.
+   */
+  async DeliverReleasedShare(ctx, requestId) {
+    requireSubmitter(ctx, ANCHORING_MSP, 'deliver key pieces');
+    const id = normaliseHex(requestId, 64, 'Request ID');
+    const request = await readJson(ctx, ctx.stub.createCompositeKey('accessRequest', [id]));
+    if (!request || request.status !== 'released') {
+      throw new Error('Access request has not been released');
+    }
+    const deliveryKey = ctx.stub.createCompositeKey('releaseDelivery', [id]);
+    if (await readJson(ctx, deliveryKey)) {
+      throw new Error('This release was already delivered');
+    }
+    const { text: sealedText, hash } = readSealedShareFromTransient(ctx);
+    if (hash !== request.releasedShareHash) {
+      throw new Error('The piece does not match the one that was released');
+    }
+    const releaser = await requireNode(ctx, request.releasedBy, 'Releaser');
+    const deliveredAt = txTime(ctx).seconds;
+
+    const piece = {
+      manifestHash: request.manifestHash,
+      requestId: id,
+      shareX: request.releasedShareX,
+      sealedShare: sealedText,
+      senderX25519PublicKey: releaser.x25519PublicKey,
+      releasedBy: releaser.nodeId,
+      releaserRole: request.releaserRole,
+      deliveredAt,
+    };
+    await ctx.stub.putPrivateData(
+      AUTHORITY_COLLECTIONS[request.authorityMsp],
+      ctx.stub.createCompositeKey('release', [request.manifestHash, String(request.releasedShareX)]),
+      Buffer.from(JSON.stringify(piece)),
+    );
+    const delivery = { requestId: id, shareHash: hash, deliveredAt, txId: ctx.stub.getTxID() };
+    await ctx.stub.putState(deliveryKey, Buffer.from(JSON.stringify(delivery)));
+    return JSON.stringify(delivery);
+  }
+
+  /**
+   * An officer records what they did with a clip after a release (opened,
+   * exported). The officer portal calls this every time it decrypts.
+   */
+  async RecordAccess(ctx, manifestHash, action, note) {
+    const officer = await requireAuthorityRole(ctx, 'officer');
+    const hash = normaliseHex(manifestHash, 64, 'Manifest hash');
+    if (!ACCESS_ACTIONS.includes(action)) {
+      throw new Error(`action must be one of ${ACCESS_ACTIONS.join(', ')}`);
+    }
+    const text = String(note ?? '').trim();
+    if (text.length > 300) {
+      throw new Error('note must be at most 300 characters');
+    }
+    const ids = await readAll(await ctx.stub.getStateByPartialCompositeKey('requestByClip', [officer.msp, hash]));
+    let released = false;
+    for (const id of ids) {
+      const request = await readJson(ctx, ctx.stub.createCompositeKey('accessRequest', [id.toString('utf8')]));
+      if (request && request.status === 'released') released = true;
+    }
+    if (!released) {
+      throw new Error(`No released access request for this clip at ${officer.msp}`);
+    }
+    await appendAudit(ctx, hash, action, { msp: officer.msp, name: officer.name, role: 'officer' }, { note: text });
+    return JSON.stringify({ manifestHash: hash, action, recorded: true });
+  }
+
+  /**
+   * A clip's chain of custody: shared, requested, released, opened. For
+   * JusticeChainOrg (the victim's app, via the gateway), the Auditor, and
+   * an authority's supervisor; not for the officers it records.
+   */
+  async GetAuditTrail(ctx, manifestHash) {
+    const msp = ctx.clientIdentity.getMSPID();
+    if (!REGISTRY_MSPS.includes(msp)) {
+      await requireAuthorityRole(ctx, 'supervisor');
+    }
+    const hash = normaliseHex(manifestHash, 64, 'Manifest hash');
+    const entries = await readAll(await ctx.stub.getStateByPartialCompositeKey('audit', [hash]));
+    return JSON.stringify(entries.map((value) => JSON.parse(value.toString('utf8'))));
   }
 }
 

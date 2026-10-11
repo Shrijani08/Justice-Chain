@@ -29,6 +29,16 @@
  *                              a block; only the authority's private
  *                              collection holds it.
  *   GET  /authority-shares/:mspId  consents for one authority (no pieces)
+ *   GET  /access-requests/:victimNodeId  officers' requests for a victim's clips
+ *   GET  /access-request/:requestId      one request, or {found: false}
+ *   POST /releases             {requestId, releaserNodeId, shareX, sealedShare,
+ *                              signature}: the victim or a guardian approves a
+ *                              request by releasing a piece. Two transactions:
+ *                              the approval (piece hash only, co-endorsed by
+ *                              the Auditor) and then the piece itself, as
+ *                              transient data, into the authority's private
+ *                              collection. Safe to retry.
+ *   GET  /audit/:manifestHash  a clip's chain of custody
  *
  * Times in records (anchoredAt) are the gateway's clock, not the ledger's;
  * blockNumber is the independent evidence of when a record was committed.
@@ -142,6 +152,35 @@ function setGuardians(body) {
   return submit('SetGuardians', [victimNodeId, JSON.stringify(guardianNodeIds), sequence, signature]);
 }
 
+/**
+ * Approves and delivers a release. A retry after the approval committed but
+ * the delivery didn't (a dropped connection, say) skips straight to the
+ * delivery, and a delivery that already happened counts as success.
+ */
+async function releaseShare(body) {
+  const { requestId, releaserNodeId, shareX, sealedShare, signature } = body;
+  const sealed = Buffer.from(String(sealedShare ?? ''), 'base64');
+  if (sealed.length === 0 || sealed.toString('base64') !== sealedShare) {
+    throw Object.assign(new Error('sealedShare must be base64'), { httpStatus: 400 });
+  }
+  const shareHash = crypto.createHash('sha256').update(sealed).digest('hex');
+
+  const current = await evaluate('GetAccessRequest', requestId);
+  const alreadyApproved = current.found && current.status === 'released' &&
+    current.releasedBy === releaserNodeId && current.releasedShareHash === shareHash;
+  const approval = alreadyApproved
+    ? current
+    : await submit('ReleaseShare', [requestId, releaserNodeId, shareX, shareHash, signature]);
+
+  try {
+    const delivery = await submit('DeliverReleasedShare', [requestId], { sealedShare });
+    return { ...approval, delivery };
+  } catch (err) {
+    if (toHttpError(err).message === 'This release was already delivered') return approval;
+    throw err;
+  }
+}
+
 function shareWithAuthority(body) {
   const { manifestHash, authorityMsp, shareX, threshold, sealedShare, signature } = body;
   return submit('ShareWithAuthority', [manifestHash, authorityMsp, shareX, threshold, signature], { sealedShare });
@@ -238,6 +277,14 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, await shareWithAuthority(await readJson(req)));
     } else if (req.method === 'GET' && parts[0] === 'authority-shares' && parts.length === 2) {
       send(res, 200, await evaluate('ListAuthorityShares', parts[1]));
+    } else if (req.method === 'GET' && parts[0] === 'access-requests' && parts.length === 2) {
+      send(res, 200, await evaluate('ListAccessRequests', parts[1]));
+    } else if (req.method === 'GET' && parts[0] === 'access-request' && parts.length === 2) {
+      send(res, 200, await evaluate('GetAccessRequest', parts[1]));
+    } else if (req.method === 'POST' && url.pathname === '/releases') {
+      send(res, 200, await releaseShare(await readJson(req)));
+    } else if (req.method === 'GET' && parts[0] === 'audit' && parts.length === 2) {
+      send(res, 200, await evaluate('GetAuditTrail', parts[1]));
     } else {
       status = 404;
       send(res, 404, { error: 'Not found' });

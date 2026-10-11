@@ -290,6 +290,33 @@ Steps 1–4 move the ledger to Fabric without any authority. Steps 5–10 are th
   - [ ] **8d. App part** (behind `DEMO_AUTHORITY`): register the phone on start-up, sync the guardian list, show the authority as a guardian option with the notice, and issue and share one extra piece per clip. Deferred until the Option-2 app work is device-tested and committed in 4c, because it touches the same files.
 - [ ] **Step 9: Request, release and audit.** `RequestAccess` (officer role only); `ReleaseShare`, where approval is an actual key release: the victim's phone issues a new piece (`issueGuardianShare`), or a guardian re-seals their own piece (`sealShare`), sealed to SimPolice's key and device-signed. Key-level endorsement needs Org1 + Org2 (Auditor). Also `GetAuthorityShare`, `RecordAccess` and `GetAuditTrail`. In the app: an "Access requests" screen for the victim and a "Release my piece" action for guardians, plus a gateway endpoint and a chaincode check of the guardian's signature and guardian registration.
   - Check: a release without a valid victim or guardian signature is rejected; an officer can't approve their own request; every step appears in the audit trail.
+  - [x] **9a–9b. Server side** *(done 12-10-2026)*. Chaincode 1.5 (sequence 7):
+    - **Release split into two transactions.** The released piece travels as private data, and the Auditor isn't a collection member, so Fabric won't send it the piece (and it shouldn't see it). So:
+      - `ReleaseShare` carries the approval and only the piece's **hash**. Its request key has a key-level policy of Org1 AND Org2, so the Auditor must co-endorse it.
+      - `DeliverReleasedShare` then brings the piece as transient data into the authority's collection, endorsed by Org1 + SimPolice, and only if it hashes to exactly the approved piece. Each release is delivered once.
+      - The gateway's `POST /releases` does both and is safe to retry: an approved but undelivered release goes straight to delivery, and an already-delivered one counts as success.
+    - `RequestAccess(hash, reason, caseRef)`: officer role of an active authority, only for a clip shared with that authority. The request ID is the transaction ID. It is indexed by victim (`ListAccessRequests`) and by clip, and `GetAccessRequest` reads one request.
+    - `ReleaseShare(requestId, releaserNodeId, shareX, shareHash, signature)`:
+      - Submitter must be Org1 (the gateway), so an officer or the Auditor can't approve.
+      - The releaser must be the victim (a new piece) or on the victim's registered guardian list (their own piece).
+      - The signature from the releaser's registered anchoring key covers `justice-chain/release-share/v1|requestId|hash|msp|x|sha256(piece)`.
+      - The piece can't be the one the authority already holds, and a request is released once.
+    - `GetAuthorityShare` now also returns the released pieces, each with its sender's X25519 key.
+    - `RecordAccess(hash, opened|exported, note)`: officer only, and only after a release for that clip.
+    - Audit trail entries (`shared`, `requested`, `released`, `opened`/`exported`) are append-only and ordered by transaction time. `GetAuditTrail` is readable by Org1 (the victim via the gateway), the Auditor and an authority supervisor, not by officers.
+    - Gateway routes: `GET /access-requests/:victimNodeId`, `GET /access-request/:id`, `POST /releases`, `GET /audit/:hash`.
+    - `fabric/network/lib/evidence-crypto.cjs` holds the Node unseal and Shamir code (`.cjs` because the repo's root `package.json` is `"type": "module"`). It matches the app's formats, and the officer portal reuses it in Step 10.
+    - Chaincode unit tests: 30 (7 new). The test stub now mirrors fabric-shim, whose private-data range queries resolve to `{iterator}`. This mismatch was found live and fixed in 1.5.
+    - Checks passed live (`test/fabric_custody_live_test.dart` share/release phases around `fabric/network/check-custody.sh request|verify`, using the app's own keys, signing and sealing):
+      - A victim and a guardian register, the victim names the guardian, anchors a clip, gives the guardian piece 1 and shares piece 3 with SimPolice. officer1 files two requests.
+      - A release signed by the victim's key but claiming to be the guardian is refused.
+      - The guardian unseals piece 1, re-seals it to SimPolice and releases it through the gateway. The Auditor co-endorsed automatically, and a retry was harmless.
+      - officer1 unsealed pieces 3 and 1 with the desk key and **recombined exactly the clip's key**. The delivery block holds no copy of the piece, only hashed writes.
+      - officer1 recorded "opened". The Auditor and the supervisor read the same trail (`shared, requested, requested, released, opened`), and officer1 is refused it.
+      - officer1 calling `ReleaseShare` is refused ("Only Org1MSP may release key pieces").
+      - A correctly signed release of request 2 endorsed by Org1 + SimPolice only (no Auditor) is invalidated with `ENDORSEMENT_POLICY_FAILURE`, and request 2 stays open.
+    - Step 8's check and ordinary anchoring still pass on 1.5. Each live run leaves its test nodes, clip, requests and audit entries on the ledger.
+  - [ ] **9c. App part**: the victim's "Access requests" screen and the guardian's "Release my piece". Comes with 8d, after the Option-2 work is committed.
 - [ ] **Step 10: Officer portal (simulated).** Web page with a permanent SIMULATED banner and a Node backend using officer1's identity: list shared evidence, request access, fetch and decrypt the key piece, collect the second piece, rebuild the key, download from IPFS, decrypt, check hash and signature, call `RecordAccess`. The JavaScript Shamir code must match `lib/core/shamir.dart` exactly; test it against pieces exported from the Dart tests.
   - Check: a clip recorded on the phone plays in the portal after approval.
 - ~~**Step 11: Second institution.**~~ **Dropped 08-10-2026** (decision 2 in section 8). Presented as future work: a court order as the second piece.
