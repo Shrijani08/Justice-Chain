@@ -12,6 +12,9 @@
  *   POST /anchor               {manifestHash, cid, capturedAt, nodeId, signature}
  *   GET  /verify/:manifestHash the record, plus the block it committed in
  *   GET  /history/:nodeId      manifest hashes anchored by one node
+ *   GET  /authorities          registered authorities (e.g. SimPolice), with
+ *                              their evidence-desk X25519 public keys
+ *   GET  /authorities/:mspId   one authority, or {found: false}
  *
  * Times in records (anchoredAt) are the gateway's clock, not the ledger's;
  * blockNumber is the independent evidence of when a record was committed.
@@ -104,6 +107,16 @@ async function history(nodeId) {
   return JSON.parse(utf8.decode(await contract.evaluateTransaction('GetEvidenceHistory', nodeId)));
 }
 
+// Read-only: registering an authority needs an Org1 or Org2 admin, which
+// this gateway's User1 identity is not (see fabric/network/register-authority.sh).
+async function authorities() {
+  return JSON.parse(utf8.decode(await contract.evaluateTransaction('ListAuthorities')));
+}
+
+async function authority(mspId) {
+  return JSON.parse(utf8.decode(await contract.evaluateTransaction('GetAuthority', mspId)));
+}
+
 /**
  * Chaincode refusals (bad input, duplicates) become 400 with the
  * chaincode's own message; anything else is a gateway or network problem.
@@ -159,6 +172,10 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, await verify(parts[1]));
     } else if (req.method === 'GET' && parts[0] === 'history' && parts.length === 2) {
       send(res, 200, await history(parts[1]));
+    } else if (req.method === 'GET' && url.pathname === '/authorities') {
+      send(res, 200, await authorities());
+    } else if (req.method === 'GET' && parts[0] === 'authorities' && parts.length === 2) {
+      send(res, 200, await authority(parts[1]));
     } else {
       status = 404;
       send(res, 404, { error: 'Not found' });

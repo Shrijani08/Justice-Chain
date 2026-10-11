@@ -19,9 +19,10 @@ const NODE = '0123456789abcdef';
 const CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 
 /** Minimal in-memory stub: composite keys, ordered partial queries, events. */
-function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0 } = {}) {
+function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0, attrs = {}, id = 'x509::CN=user1::CN=ca' } = {}) {
   const state = new Map();
   const events = [];
+  const validation = new Map();
   let txCount = 0;
   const stub = {
     createCompositeKey: (type, attrs) => `\u0000${type}\u0000${attrs.join('\u0000')}\u0000`,
@@ -30,8 +31,10 @@ function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0 } = {}) {
     getTxTimestamp: () => ({ seconds: { toString: () => String(stub.seconds) }, nanos: stub.nanos }),
     getTxID: () => `tx${++txCount}`,
     setEvent: (name, payload) => events.push({ name, payload: payload.toString() }),
+    setStateValidationParameter: async (key, policy) => { validation.set(key, Buffer.from(policy)); },
     getStateByPartialCompositeKey: async (type, attrs) => {
-      const prefix = `\u0000${type}\u0000${attrs.join('\u0000')}\u0000`;
+      // Like Fabric: an empty attribute list matches every key of the type.
+      const prefix = `\u0000${type}\u0000${attrs.map((a) => `${a}\u0000`).join('')}`;
       const rows = [...state.keys()].filter((k) => k.startsWith(prefix)).sort()
         .map((k) => ({ key: k, value: state.get(k) }));
       let i = 0;
@@ -43,7 +46,13 @@ function makeCtx({ msp = 'Org1MSP', seconds = 1791400000, nanos = 0 } = {}) {
     seconds,
     nanos,
   };
-  return { stub, clientIdentity: { getMSPID: () => msp }, events };
+  const clientIdentity = {
+    getMSPID: () => msp,
+    getID: () => id,
+    // Like fabric-shim: null for an attribute the certificate doesn't carry.
+    getAttributeValue: (name) => attrs[name] ?? null,
+  };
+  return { stub, clientIdentity, events, validation };
 }
 
 const ledger = new JusticeLedger();
@@ -110,4 +119,134 @@ test('GetEvidenceHistory lists a node\'s anchors in anchoring order', async () =
   await ledger.AnchorEvidence(ctx, HASH, CID, '1', NODE, APP_SIGNATURE);
   assert.deepEqual(JSON.parse(await ledger.GetEvidenceHistory(ctx, NODE)), [HASH, OTHER_HASH]);
   assert.deepEqual(JSON.parse(await ledger.GetEvidenceHistory(ctx, 'fedcba9876543210')), []);
+});
+
+test('WhoAmI reports an officer\'s org, role, unit and SIMULATED flag from the certificate', async () => {
+  const ctx = makeCtx({
+    msp: 'SimPoliceMSP',
+    id: 'x509::CN=officer1::CN=ca.simpolice.example.com',
+    attrs: { role: 'officer', unit: 'demo-unit', 'jc.simulated': 'true' },
+  });
+  assert.deepEqual(JSON.parse(await ledger.WhoAmI(ctx)), {
+    mspId: 'SimPoliceMSP',
+    id: 'x509::CN=officer1::CN=ca.simpolice.example.com',
+    role: 'officer',
+    unit: 'demo-unit',
+    simulated: true,
+  });
+});
+
+test('WhoAmI shows a missing role as null and simulated as false', async () => {
+  const me = JSON.parse(await ledger.WhoAmI(makeCtx({ msp: 'Org1MSP' })));
+  assert.equal(me.mspId, 'Org1MSP');
+  assert.equal(me.role, null);
+  assert.equal(me.simulated, false);
+});
+
+// --- Authority registry -----------------------------------------------------
+
+const { KeyEndorsementPolicy } = require('fabric-shim');
+
+const POLICE_KEY = Buffer.alloc(32, 7).toString('base64');
+const POLICE_NAME = 'Demo Police Authority (SIMULATED)';
+
+function adminCtx(overrides = {}) {
+  return makeCtx({ msp: 'Org1MSP', attrs: { 'hf.Type': 'admin' }, ...overrides });
+}
+
+test('an Org1 admin registers SimPolice, and Org1 and Org2 peers must endorse later changes', async () => {
+  const ctx = adminCtx();
+  const record = JSON.parse(await ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true'));
+  assert.deepEqual(record, {
+    mspId: 'SimPoliceMSP',
+    name: POLICE_NAME,
+    publicKey: POLICE_KEY,
+    simulated: true,
+    revoked: false,
+    registeredAt: 1791400000,
+    registeredBy: 'Org1MSP',
+  });
+  assert.equal(ctx.events[0].name, 'AuthorityRegistered');
+
+  const key = ctx.stub.createCompositeKey('authority', ['SimPoliceMSP']);
+  const policy = new KeyEndorsementPolicy(ctx.validation.get(key));
+  assert.deepEqual(policy.listOrgs().sort(), ['Org1MSP', 'Org2MSP']);
+});
+
+test('only Org1 or Org2 admins may register or revoke', async () => {
+  const outsiders = [
+    makeCtx({ msp: 'Org1MSP', attrs: { 'hf.Type': 'client' } }),
+    makeCtx({ msp: 'SimPoliceMSP', attrs: { 'hf.Type': 'admin' } }),
+    makeCtx({ msp: 'SimPoliceMSP', attrs: { role: 'officer' } }),
+  ];
+  for (const ctx of outsiders) {
+    await assert.rejects(
+      ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true'),
+      /Only an admin of Org1MSP or Org2MSP/,
+    );
+    await assert.rejects(ledger.RevokeAuthority(ctx, 'SimPoliceMSP'), /Only an admin/);
+  }
+  const auditorAdmin = makeCtx({ msp: 'Org2MSP', attrs: { 'hf.Type': 'admin' } });
+  const record = JSON.parse(await ledger.RegisterAuthority(auditorAdmin, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true'));
+  assert.equal(record.registeredBy, 'Org2MSP');
+});
+
+test('a simulated authority must say SIMULATED, and inputs are checked', async () => {
+  const ctx = adminCtx();
+  await assert.rejects(
+    ledger.RegisterAuthority(ctx, 'SimPoliceMSP', 'Demo Police Authority', POLICE_KEY, 'true'),
+    /must include "\(SIMULATED\)"/,
+  );
+  await assert.rejects(ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, 'not-a-key', 'true'), /publicKey/);
+  await assert.rejects(
+    ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, Buffer.alloc(31).toString('base64'), 'true'),
+    /publicKey/,
+  );
+  await assert.rejects(ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'yes'), /simulated/);
+  await assert.rejects(ledger.RegisterAuthority(ctx, 'Sim Police', POLICE_NAME, POLICE_KEY, 'true'), /mspId/);
+  await assert.rejects(ledger.RegisterAuthority(ctx, 'SimPoliceMSP', '  ', POLICE_KEY, 'true'), /name/);
+  await assert.rejects(
+    ledger.RegisterAuthority(ctx, 'Org2MSP', 'Auditor (SIMULATED)', POLICE_KEY, 'true'),
+    /runs the registry/,
+  );
+});
+
+test('an active authority cannot be registered twice; a revoked one can come back', async () => {
+  const ctx = adminCtx();
+  await ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true');
+  await assert.rejects(
+    ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true'),
+    /already registered/,
+  );
+
+  ctx.stub.seconds = 1791500000;
+  const revoked = JSON.parse(await ledger.RevokeAuthority(ctx, 'SimPoliceMSP'));
+  assert.equal(revoked.revoked, true);
+  assert.equal(revoked.revokedAt, 1791500000);
+  assert.equal(revoked.revokedBy, 'Org1MSP');
+  await assert.rejects(ledger.RevokeAuthority(ctx, 'SimPoliceMSP'), /already revoked/);
+
+  const again = JSON.parse(await ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true'));
+  assert.equal(again.revoked, false);
+});
+
+test('revoking an unknown authority fails', async () => {
+  await assert.rejects(ledger.RevokeAuthority(adminCtx(), 'NobodyMSP'), /not a registered authority/);
+});
+
+test('GetAuthority and ListAuthorities are readable by any member and list only authorities', async () => {
+  const ctx = adminCtx();
+  await ledger.RegisterAuthority(ctx, 'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true');
+  await ledger.AnchorEvidence(ctx, HASH, CID, '1', NODE, APP_SIGNATURE);
+
+  // An officer reading the same world state.
+  const officer = makeCtx({ msp: 'SimPoliceMSP', attrs: { role: 'officer' } });
+  officer.stub.getState = ctx.stub.getState;
+  officer.stub.getStateByPartialCompositeKey = ctx.stub.getStateByPartialCompositeKey;
+
+  const one = JSON.parse(await ledger.GetAuthority(officer, 'SimPoliceMSP'));
+  assert.equal(one.found, true);
+  assert.equal(one.publicKey, POLICE_KEY);
+  assert.deepEqual(JSON.parse(await ledger.GetAuthority(officer, 'NobodyMSP')), { found: false, mspId: 'NobodyMSP' });
+  assert.deepEqual(JSON.parse(await ledger.ListAuthorities(officer)).map((a) => a.mspId), ['SimPoliceMSP']);
 });

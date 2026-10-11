@@ -15,10 +15,42 @@
  */
 
 const { Contract } = require('fabric-contract-api');
+const { KeyEndorsementPolicy } = require('fabric-shim');
 const { getBytes, verifyMessage } = require('ethers');
 
 // Only JusticeChainOrg's gateway submits anchors on behalf of phones.
 const ANCHORING_MSP = 'Org1MSP';
+
+// Admins of JusticeChainOrg and the Auditor manage the authority registry,
+// and both orgs' peers must endorse any later change to an entry, so
+// neither can register, swap the key of, or revoke an authority alone.
+const REGISTRY_MSPS = ['Org1MSP', 'Org2MSP'];
+
+function requireRegistryAdmin(ctx) {
+  const msp = ctx.clientIdentity.getMSPID();
+  if (!REGISTRY_MSPS.includes(msp) || ctx.clientIdentity.getAttributeValue('hf.Type') !== 'admin') {
+    throw new Error(`Only an admin of ${REGISTRY_MSPS.join(' or ')} may change the authority registry`);
+  }
+  return msp;
+}
+
+function normaliseMspId(value) {
+  const mspId = String(value ?? '').trim();
+  if (!/^[A-Za-z0-9.-]{1,64}$/.test(mspId)) {
+    throw new Error('mspId must be 1-64 letters, digits, dots or hyphens');
+  }
+  return mspId;
+}
+
+/** A raw 32-byte X25519 public key in standard base64, as the app stores keys. */
+function normaliseX25519PublicKey(value) {
+  const text = String(value ?? '').trim();
+  const bytes = Buffer.from(text, 'base64');
+  if (bytes.length !== 32 || bytes.toString('base64') !== text) {
+    throw new Error('publicKey must be a base64 32-byte X25519 key');
+  }
+  return text;
+}
 
 /** Lowercase, no 0x, exactly [length] hex characters, or throws. */
 function normaliseHex(value, length, label) {
@@ -151,6 +183,124 @@ class JusticeLedger extends Contract {
       await iterator.close();
     }
     return JSON.stringify(hashes);
+  }
+
+  /**
+   * The caller as the chaincode sees it: their org, and the role and flags
+   * their CA wrote into the certificate. The authority functions check the
+   * same values, so this is how an officer confirms their identity is set
+   * up before using them. An attribute the CA registered without the
+   * `:ecert` suffix is not in the certificate and shows here as null.
+   */
+  async WhoAmI(ctx) {
+    const identity = ctx.clientIdentity;
+    return JSON.stringify({
+      mspId: identity.getMSPID(),
+      id: identity.getID(),
+      role: identity.getAttributeValue('role'),
+      unit: identity.getAttributeValue('unit'),
+      simulated: identity.getAttributeValue('jc.simulated') === 'true',
+    });
+  }
+
+  /**
+   * Adds an authority (e.g. SimPoliceMSP) that victims can choose as a
+   * guardian. [publicKey] is its evidence desk's X25519 key: key pieces
+   * are sealed to it, and it is separate from the org's Fabric signing
+   * certificates, so a peer admin who can read the ledger still can't open
+   * a piece. A simulated authority must say "(SIMULATED)" in its name, so
+   * the app can never show it as a real police force.
+   */
+  async RegisterAuthority(ctx, mspId, name, publicKey, simulated) {
+    const registeredBy = requireRegistryAdmin(ctx);
+    const id = normaliseMspId(mspId);
+    if (REGISTRY_MSPS.includes(id)) {
+      throw new Error(`${id} runs the registry and cannot be registered as an authority`);
+    }
+    const label = String(name ?? '').trim();
+    if (label.length === 0 || label.length > 100) {
+      throw new Error('name must be 1-100 characters');
+    }
+    if (simulated !== 'true' && simulated !== 'false') {
+      throw new Error('simulated must be "true" or "false"');
+    }
+    const isSimulated = simulated === 'true';
+    if (isSimulated && !label.includes('(SIMULATED)')) {
+      throw new Error('A simulated authority\'s name must include "(SIMULATED)"');
+    }
+
+    const key = ctx.stub.createCompositeKey('authority', [id]);
+    const existing = await ctx.stub.getState(key);
+    if (existing && existing.length > 0 && !JSON.parse(existing.toString('utf8')).revoked) {
+      throw new Error(`${id} is already registered`);
+    }
+
+    // Fixed field order so every peer serialises the record identically.
+    const record = {
+      mspId: id,
+      name: label,
+      publicKey: normaliseX25519PublicKey(publicKey),
+      simulated: isSimulated,
+      revoked: false,
+      registeredAt: txTime(ctx).seconds,
+      registeredBy,
+    };
+    await ctx.stub.putState(key, Buffer.from(JSON.stringify(record)));
+
+    const policy = new KeyEndorsementPolicy();
+    policy.addOrgs('PEER', ...REGISTRY_MSPS);
+    await ctx.stub.setStateValidationParameter(key, policy.getPolicy());
+
+    ctx.stub.setEvent('AuthorityRegistered', Buffer.from(JSON.stringify(record)));
+    return JSON.stringify(record);
+  }
+
+  /**
+   * Offboards an authority: it stays listed (for the audit trail) but
+   * marked revoked, and the authority functions refuse it from then on.
+   */
+  async RevokeAuthority(ctx, mspId) {
+    const revokedBy = requireRegistryAdmin(ctx);
+    const id = normaliseMspId(mspId);
+    const key = ctx.stub.createCompositeKey('authority', [id]);
+    const data = await ctx.stub.getState(key);
+    if (!data || data.length === 0) {
+      throw new Error(`${id} is not a registered authority`);
+    }
+    const record = JSON.parse(data.toString('utf8'));
+    if (record.revoked) {
+      throw new Error(`${id} is already revoked`);
+    }
+    const updated = { ...record, revoked: true, revokedAt: txTime(ctx).seconds, revokedBy };
+    await ctx.stub.putState(key, Buffer.from(JSON.stringify(updated)));
+    ctx.stub.setEvent('AuthorityRevoked', Buffer.from(JSON.stringify(updated)));
+    return JSON.stringify(updated);
+  }
+
+  /** One authority's entry, or found: false. */
+  async GetAuthority(ctx, mspId) {
+    const id = normaliseMspId(mspId);
+    const data = await ctx.stub.getState(ctx.stub.createCompositeKey('authority', [id]));
+    if (!data || data.length === 0) {
+      return JSON.stringify({ found: false, mspId: id });
+    }
+    return JSON.stringify({ found: true, ...JSON.parse(data.toString('utf8')) });
+  }
+
+  /** Every registered authority, including revoked ones (marked revoked). */
+  async ListAuthorities(ctx) {
+    const iterator = await ctx.stub.getStateByPartialCompositeKey('authority', []);
+    const authorities = [];
+    try {
+      let result = await iterator.next();
+      while (!result.done) {
+        authorities.push(JSON.parse(result.value.value.toString('utf8')));
+        result = await iterator.next();
+      }
+    } finally {
+      await iterator.close();
+    }
+    return JSON.stringify(authorities);
   }
 }
 
