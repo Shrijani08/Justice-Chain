@@ -130,6 +130,20 @@ class OutboxService {
         {'recordKey': manifestHash, 'toNodeId': toNodeId},
       );
 
+  /// Drops queued outbound deliveries to [nodeId] (key shares, clip relays,
+  /// forwarded shares) after the user removes that guardian. Relayed clips
+  /// already accepted from them still upload. Returns how many were dropped.
+  static Future<int> cancelJobsForNode(String nodeId) async {
+    final ids = _box.keys.cast<String>().where((id) {
+      final isOutbound = id.startsWith('$jobKeyShare:') ||
+          id.startsWith('$jobMeshRelay:') ||
+          id.startsWith('$jobShareForward:');
+      return isOutbound && id.endsWith(':$nodeId');
+    }).toList();
+    await _box.deleteAll(ids);
+    return ids.length;
+  }
+
   static bool _hasPendingMeshJobs() => _box.values.any(
         (job) =>
             job is Map &&

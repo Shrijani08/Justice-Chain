@@ -16,6 +16,7 @@ import 'evidence_viewer_screen.dart';
 import 'guardian_evidence_screen.dart';
 import 'guardian_pairing_screen.dart';
 import 'guardian_scanner_screen.dart';
+import 'guardians_screen.dart';
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -477,6 +478,18 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const GuardiansScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.groups),
+                  label: const Text('My Guardians'),
+                ),
                 TextButton.icon(
                   onPressed: () {
                     Navigator.push(

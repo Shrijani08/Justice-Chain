@@ -27,6 +27,7 @@ class GuardianIncident {
     required this.capturedAt,
     required this.cid,
     required this.shareCount,
+    required this.threshold,
     required this.hasOwnShare,
     required this.hasLocalCopy,
   });
@@ -37,10 +38,15 @@ class GuardianIncident {
   final DateTime? capturedAt;
   final String? cid;
   final int shareCount;
+
+  /// Key pieces needed for this clip, as reported by the victim's phone.
+  /// Only a hint for the UI: the share polynomial is what really decides,
+  /// and a wrong value just fails decryption.
+  final int threshold;
   final bool hasOwnShare;
   final bool hasLocalCopy;
 
-  bool get hasQuorum => shareCount >= EvidenceEncryptor.guardianQuorum;
+  bool get hasQuorum => shareCount >= threshold;
 }
 
 /// A single verification step's outcome. [passed] is null when the check
@@ -84,12 +90,20 @@ class GuardianEvidenceService {
         if (s is Map) s['manifestHash'] as String,
       ..._relayBox.keys.cast<String>(),
     };
-    final contacts = GuardianManager.getTrustedGuardians();
+    final contacts = GuardianManager.getAllContacts();
 
     final incidents = [
       for (final hash in hashes) _buildIncident(hash, contacts),
     ]..sort((a, b) => (b.capturedAt ?? DateTime(0)).compareTo(a.capturedAt ?? DateTime(0)));
     return incidents;
+  }
+
+  static int _thresholdOf(List<Map<String, dynamic>> shares) {
+    final reported = shares.map((s) => s['quorum']).whereType<int>().firstOrNull;
+    if (reported == null || reported < 1 || reported > EvidenceEncryptor.guardianQuorum) {
+      return EvidenceEncryptor.guardianQuorum;
+    }
+    return reported;
   }
 
   static GuardianIncident _buildIncident(String hash, Map contacts) {
@@ -110,13 +124,14 @@ class GuardianEvidenceService {
       capturedAt: DateTime.tryParse((any['capturedAt'] as String?) ?? ''),
       cid: cid,
       shareCount: shares.map((s) => s['senderNodeId']).toSet().length,
+      threshold: _thresholdOf(shares),
       hasOwnShare: shares.any((s) => s['forwardedBy'] == null),
       hasLocalCopy: relay != null && File(relay['path'] as String).existsSync(),
     );
   }
 
   static Future<VerifiedClip> openAndVerify(String manifestHash) async {
-    final incident = _buildIncident(manifestHash, GuardianManager.getTrustedGuardians());
+    final incident = _buildIncident(manifestHash, GuardianManager.getAllContacts());
     final checks = <VerificationCheck>[];
 
     // 1. Rebuild the incident key from a quorum of shares.
@@ -130,9 +145,9 @@ class GuardianEvidenceService {
       );
       unsealed[share.x] = share;
     }
-    if (unsealed.length < EvidenceEncryptor.guardianQuorum) {
+    if (unsealed.length < incident.threshold) {
       throw StateError(
-        'Need ${EvidenceEncryptor.guardianQuorum} guardian key pieces, have ${unsealed.length}. '
+        'Need ${incident.threshold} guardian key pieces, have ${unsealed.length}. '
         'Ask another guardian to send you theirs.',
       );
     }
@@ -143,12 +158,21 @@ class GuardianEvidenceService {
 
     // 3. Ciphertext: relayed copy first, else fetch from IPFS.
     final cipherPath = await _obtainCiphertext(manifestHash, cid);
-    final plaintext = await EvidenceEncryptor.decryptFileWithShares(
-      cipherPath: cipherPath,
-      shares: unsealed.values.toList(),
-    );
+    final Uint8List plaintext;
+    try {
+      plaintext = await EvidenceEncryptor.decryptFileWithShares(
+        cipherPath: cipherPath,
+        shares: unsealed.values.toList(),
+        threshold: incident.threshold,
+      );
+    } on SecretBoxAuthenticationError {
+      throw StateError(
+        "These key pieces don't open this clip. More pieces may be needed: "
+        'ask another guardian to send you theirs.',
+      );
+    }
     checks.add(VerificationCheck(
-      'Decrypted by guardian quorum',
+      incident.threshold == 1 ? 'Decrypted by one guardian' : 'Decrypted by guardian quorum',
       true,
       '${unsealed.length} key pieces; AES-GCM authenticated the ciphertext',
     ));
@@ -220,7 +244,7 @@ class GuardianEvidenceService {
         .map((s) => s['signature'])
         .whereType<String>()
         .firstOrNull;
-    final contact = GuardianManager.getTrustedGuardians()[victimNodeId];
+    final contact = GuardianManager.getAllContacts()[victimNodeId];
     final publicKeyB64 = contact is Map ? contact['public_key'] as String? : null;
 
     if (signatureB64 == null || publicKeyB64 == null) {
@@ -239,7 +263,7 @@ class GuardianEvidenceService {
 
   static VerificationCheck _checkSigner(String chainSigner, String victimNodeId) {
     const label = 'On-chain signer is the victim';
-    final contact = GuardianManager.getTrustedGuardians()[victimNodeId];
+    final contact = GuardianManager.getAllContacts()[victimNodeId];
     final expected = contact is Map ? contact['anchoring_address'] as String? : null;
     if (expected == null) {
       return VerificationCheck(label, null, 'Signer $chainSigner (no address saved at pairing to compare)');

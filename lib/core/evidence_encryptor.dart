@@ -23,6 +23,7 @@ class EncryptedEvidenceResult {
     required this.encryptedAt,
     required this.guardianShares,
     required this.nextShareX,
+    required this.threshold,
   });
 
   /// Path to the on-disk ciphertext (nonce + MAC + ciphertext).
@@ -45,8 +46,12 @@ class EncryptedEvidenceResult {
 
   /// One Shamir share of the incident key per guardian, each sealed to that
   /// guardian's X25519 key, keyed by guardian node ID. No single share can
-  /// decrypt; [EvidenceEncryptor.guardianQuorum] of them are needed.
+  /// decrypt unless [threshold] is 1; [threshold] of them are needed.
   final Map<String, String> guardianShares;
+
+  /// How many guardian shares rebuild this incident's key. Fixed by the
+  /// share polynomial at recording time and can't be changed afterwards.
+  final int threshold;
 
   /// The share index to give the next guardian issued a share for this
   /// incident (indices must never repeat).
@@ -65,7 +70,9 @@ class EvidenceEncryptor {
   static Future<EncryptedEvidenceResult> encryptAndSeal(
     String plaintextPath, {
     List<GuardianKeyInfo> guardians = const [],
+    int threshold = guardianQuorum,
   }) async {
+    _checkThreshold(threshold);
     final plaintextFile = File(plaintextPath);
     if (!await plaintextFile.exists()) {
       throw ArgumentError('No file at $plaintextPath to encrypt.');
@@ -97,6 +104,7 @@ class EvidenceEncryptor {
         incidentKey,
         nextShareX++,
         guardian.x25519PublicKeyB64,
+        threshold,
       );
     }
 
@@ -110,19 +118,23 @@ class EvidenceEncryptor {
       encryptedAt: DateTime.now(),
       guardianShares: guardianShares,
       nextShareX: nextShareX,
+      threshold: threshold,
     );
   }
 
   /// Issues a share for a guardian paired after the incident was recorded.
   /// Shares come from a polynomial derived deterministically from the
   /// incident key, so a late share combines with ones issued at record time.
+  /// [threshold] must be the one the incident was recorded with.
   static Future<String> issueGuardianShare({
     required String wrappedKeyB64,
     required int x,
     required String guardianX25519PublicKeyB64,
+    int threshold = guardianQuorum,
   }) async {
+    _checkThreshold(threshold);
     final incidentKey = await unwrapIncidentKey(wrappedKeyB64);
-    return _sealShareForGuardian(incidentKey, x, guardianX25519PublicKeyB64);
+    return _sealShareForGuardian(incidentKey, x, guardianX25519PublicKeyB64, threshold);
   }
 
   /// Encrypts [incidentKey]'s raw bytes under the device's vault key, so
@@ -156,22 +168,34 @@ class EvidenceEncryptor {
     return SecretKey(keyBytes);
   }
 
-  /// Number of guardian shares needed to rebuild an incident key, so no
-  /// single guardian (who could be the attacker) can view a clip alone.
+  /// Default number of guardian shares needed to rebuild an incident key,
+  /// so no single guardian (who could be the attacker) can view a clip
+  /// alone. A victim with only one guardian can opt into a threshold of 1.
   static const int guardianQuorum = 2;
 
-  static Future<List<Uint8List>> _shareCoefficients(SecretKey incidentKey) async {
+  static void _checkThreshold(int threshold) {
+    if (threshold < 1 || threshold > guardianQuorum) {
+      throw ArgumentError('Threshold must be 1..$guardianQuorum, got $threshold.');
+    }
+  }
+
+  static Future<List<Uint8List>> _shareCoefficients(
+    SecretKey incidentKey,
+    int threshold,
+  ) async {
+    // Threshold 1 means a constant polynomial: every share is the key.
+    if (threshold == 1) return const [];
     final keyLength = (await incidentKey.extractBytes()).length;
     final hkdf = Hkdf(
       hmac: Hmac.sha256(),
-      outputLength: keyLength * (guardianQuorum - 1),
+      outputLength: keyLength * (threshold - 1),
     );
     final derived = await (await hkdf.deriveKey(
       secretKey: incidentKey,
       info: utf8.encode('justice-chain-shamir-coefficients-v1'),
     )).extractBytes();
     return [
-      for (var i = 0; i < guardianQuorum - 1; i++)
+      for (var i = 0; i < threshold - 1; i++)
         Uint8List.fromList(derived.sublist(i * keyLength, (i + 1) * keyLength)),
     ];
   }
@@ -184,10 +208,11 @@ class EvidenceEncryptor {
     SecretKey incidentKey,
     int x,
     String guardianX25519PublicKeyB64,
+    int threshold,
   ) async {
     final share = Shamir.shareAt(
       secret: Uint8List.fromList(await incidentKey.extractBytes()),
-      coefficients: await _shareCoefficients(incidentKey),
+      coefficients: await _shareCoefficients(incidentKey, threshold),
       x: x,
     );
     return sealShare(share, guardianX25519PublicKeyB64);
@@ -226,13 +251,19 @@ class EvidenceEncryptor {
     return (x: bytes.first, y: Uint8List.fromList(bytes.sublist(1)));
   }
 
-  /// Rebuilds the incident key from at least [guardianQuorum] unsealed shares.
-  static SecretKey recoverIncidentKey(List<ShamirShare> shares) {
-    if (shares.length < guardianQuorum) {
+  /// Rebuilds the incident key from at least [threshold] unsealed shares.
+  /// For threshold 1 every share already is the key, so one is used.
+  static SecretKey recoverIncidentKey(
+    List<ShamirShare> shares, {
+    int threshold = guardianQuorum,
+  }) {
+    _checkThreshold(threshold);
+    if (shares.length < threshold) {
       throw StateError(
-        'Need $guardianQuorum guardian shares to decrypt, got ${shares.length}.',
+        'Need $threshold guardian shares to decrypt, got ${shares.length}.',
       );
     }
+    if (threshold == 1) return SecretKey(List<int>.from(shares.first.y));
     return SecretKey(Shamir.combine(shares));
   }
 
@@ -281,8 +312,12 @@ class EvidenceEncryptor {
   static Future<Uint8List> decryptFileWithShares({
     required String cipherPath,
     required List<ShamirShare> shares,
+    int threshold = guardianQuorum,
   }) {
-    return _decryptFileWithKey(cipherPath, recoverIncidentKey(shares));
+    return _decryptFileWithKey(
+      cipherPath,
+      recoverIncidentKey(shares, threshold: threshold),
+    );
   }
 
   static Future<Uint8List> _decryptFileWithKey(

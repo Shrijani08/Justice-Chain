@@ -59,6 +59,20 @@ class EvidenceVaultService {
     }
   }
 
+  /// How many guardians a new recording needs: one only when the user has
+  /// opted into single-guardian mode and has fewer than the default number
+  /// of guardians that can hold key pieces.
+  static int thresholdFor(int guardiansWithKeys) =>
+      GuardianManager.allowSingleGuardian &&
+              guardiansWithKeys < EvidenceEncryptor.guardianQuorum
+          ? 1
+          : EvidenceEncryptor.guardianQuorum;
+
+  /// The threshold a record was sealed with. Records from before thresholds
+  /// were stored always used the default.
+  static int recordThreshold(Map record) =>
+      (record['threshold'] as int?) ?? EvidenceEncryptor.guardianQuorum;
+
   static List<GuardianKeyInfo> _guardiansWithKeys() {
     // Guardians paired before X25519 key sharing existed have no usable
     // key yet (migration case) and are skipped until they re-pair.
@@ -89,9 +103,11 @@ class EvidenceVaultService {
       // this device, gives every currently-paired guardian one Shamir share
       // of it, signs the plaintext hash, and deletes the plaintext — only
       // the ciphertext and its record exist on disk from this point on.
+      final guardians = _guardiansWithKeys();
       final sealed = await EvidenceEncryptor.encryptAndSeal(
         filePath,
-        guardians: _guardiansWithKeys(),
+        guardians: guardians,
+        threshold: thresholdFor(guardians.length),
       );
 
       // Keyed by content hash, not by insertion position, so the record
@@ -103,6 +119,7 @@ class EvidenceVaultService {
         'signature': sealed.signatureB64,
         'guardianShares': sealed.guardianShares,
         'nextShareX': sealed.nextShareX,
+        'threshold': sealed.threshold,
         'timestamp': sealed.encryptedAt.toIso8601String(),
         'status': 'locally_secured',
         'cid': null,
@@ -222,6 +239,7 @@ class EvidenceVaultService {
           wrappedKeyB64: record['wrappedKey'] as String,
           x: nextShareX++,
           guardianX25519PublicKeyB64: guardian.x25519PublicKeyB64,
+          threshold: recordThreshold(record),
         );
         await OutboxService.enqueueKeyShare(key as String, guardian.nodeId);
         changed = true;

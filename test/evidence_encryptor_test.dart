@@ -220,6 +220,106 @@ void main() {
       final result = await EvidenceEncryptor.encryptAndSeal(plaintextPath);
       expect(result.guardianShares, isEmpty);
       expect(result.nextShareX, 1);
+      expect(result.threshold, EvidenceEncryptor.guardianQuorum);
+    });
+
+    group('single-guardian threshold', () {
+      test('one guardian alone can decrypt a threshold-1 clip', () async {
+        final a = await newGuardian('guardian-a');
+        final result = await EvidenceEncryptor.encryptAndSeal(
+          plaintextPath,
+          guardians: [a.$2],
+          threshold: 1,
+        );
+        expect(result.threshold, 1);
+
+        final recovered = await EvidenceEncryptor.decryptFileWithShares(
+          cipherPath: result.cipherPath,
+          shares: [await unseal(result.guardianShares['guardian-a']!, a.$1)],
+          threshold: 1,
+        );
+        expect(utf8.decode(recovered), plaintextContent);
+      });
+
+      test('a guardian added later can also open a threshold-1 clip alone', () async {
+        final a = await newGuardian('guardian-a');
+        final late = await newGuardian('guardian-late');
+        final result = await EvidenceEncryptor.encryptAndSeal(
+          plaintextPath,
+          guardians: [a.$2],
+          threshold: 1,
+        );
+
+        final lateSealed = await EvidenceEncryptor.issueGuardianShare(
+          wrappedKeyB64: result.wrappedKeyB64,
+          x: result.nextShareX,
+          guardianX25519PublicKeyB64: late.$2.x25519PublicKeyB64,
+          threshold: 1,
+        );
+
+        final recovered = await EvidenceEncryptor.decryptFileWithShares(
+          cipherPath: result.cipherPath,
+          shares: [await unseal(lateSealed, late.$1)],
+          threshold: 1,
+        );
+        expect(utf8.decode(recovered), plaintextContent);
+      });
+
+      test('claiming threshold 1 for a threshold-2 clip fails authentication', () async {
+        // The polynomial, not the reported number, decides who can decrypt.
+        final a = await newGuardian('guardian-a');
+        final result = await EvidenceEncryptor.encryptAndSeal(
+          plaintextPath,
+          guardians: [a.$2],
+        );
+        final shareA = await unseal(result.guardianShares['guardian-a']!, a.$1);
+
+        expect(
+          () => EvidenceEncryptor.decryptFileWithShares(
+            cipherPath: result.cipherPath,
+            shares: [shareA],
+            threshold: 1,
+          ),
+          throwsA(isA<SecretBoxAuthenticationError>()),
+        );
+      });
+
+      test('a late share issued with the wrong threshold does not combine', () async {
+        final a = await newGuardian('guardian-a');
+        final late = await newGuardian('guardian-late');
+        final result = await EvidenceEncryptor.encryptAndSeal(
+          plaintextPath,
+          guardians: [a.$2],
+          threshold: 1,
+        );
+        // Bug guard: issuing with the default (2) for a threshold-1 record.
+        final wrongLate = await EvidenceEncryptor.issueGuardianShare(
+          wrappedKeyB64: result.wrappedKeyB64,
+          x: result.nextShareX,
+          guardianX25519PublicKeyB64: late.$2.x25519PublicKeyB64,
+        );
+        final wrongShare = await unseal(wrongLate, late.$1);
+
+        expect(
+          () => EvidenceEncryptor.decryptFileWithShares(
+            cipherPath: result.cipherPath,
+            shares: [wrongShare],
+            threshold: 1,
+          ),
+          throwsA(isA<SecretBoxAuthenticationError>()),
+        );
+      });
+
+      test('thresholds outside 1..2 are rejected', () async {
+        expect(
+          () => EvidenceEncryptor.encryptAndSeal(plaintextPath, threshold: 0),
+          throwsArgumentError,
+        );
+        expect(
+          () => EvidenceEncryptor.encryptAndSeal(plaintextPath, threshold: 3),
+          throwsArgumentError,
+        );
+      });
     });
   });
 }

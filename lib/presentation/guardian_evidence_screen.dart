@@ -54,7 +54,7 @@ class _IncidentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final quorum = EvidenceEncryptor.guardianQuorum;
+    final quorum = incident.threshold;
     final source = incident.hasLocalCopy
         ? 'copy on this phone'
         : incident.cid != null

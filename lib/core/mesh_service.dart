@@ -12,6 +12,7 @@ import '../logic/guardian_manager.dart';
 import '../logic/safety_signals.dart';
 import 'anchoring_service.dart';
 import 'evidence_encryptor.dart';
+import 'evidence_vault_service.dart';
 import 'identity_service.dart';
 import 'outbox_service.dart';
 
@@ -227,6 +228,14 @@ class MeshService {
     }
   }
 
+  /// Drops the live link to [nodeId], if any (used when a guardian is removed).
+  static Future<void> disconnectNode(String nodeId) async {
+    final endpointId = _connectedNodes[nodeId];
+    if (endpointId == null) return;
+    await Nearby().disconnectFromEndpoint(endpointId);
+    _forgetEndpoint(endpointId);
+  }
+
   static void _onDisconnected(String endpointId) {
     developer.log('💔 Disconnected from $endpointId', name: 'JusticeChain.Mesh');
     _forgetEndpoint(endpointId);
@@ -278,7 +287,7 @@ class MeshService {
       // Victim's Ed25519 signature over the plaintext hash, so the guardian
       // can later prove this device produced the clip.
       'signature': record['signature'],
-      'quorum': EvidenceEncryptor.guardianQuorum,
+      'quorum': EvidenceVaultService.recordThreshold(record),
     });
     developer.log('🔑 Key share for $recordKey sent to $guardianNodeId', name: 'JusticeChain.Mesh');
   }
