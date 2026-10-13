@@ -20,12 +20,16 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 
 ## The steps
 
-### Step 1. Save the finished work (10 minutes, no decisions)
+### Step 1. Save the finished work (10 minutes, no decisions) — done 14-10-2026, commit `df762fe1`
 - **What:** commit the release-build fix (`AndroidManifest.xml` internet permission, `android/app/proguard-rules.pro`) and the DOCS notes from the 12-10 verification, plus this file.
 - **Why:** they are finished and tested; leaving them uncommitted risks losing them or mixing them into later work.
 - **Done when:** `git status` shows only the hardware files.
 
 ### Step 2. Pick the app's name and permanent ID (decision from you, then 30 minutes)
+**Decided 14-10-2026:**
+- **Name:** **Sakshya** (साक्ष्य, "evidence, testimony").
+- **App ID:** `in.sakshya.app`. Only `applicationId` changes; the code's `namespace` and Kotlin package stay `com.example.justice_chain`, since users never see them.
+- **Icon:** choose later from the three prototype designs (tag, monogram, seal). The tag is used as a placeholder until then; swapping it later is just an image change.
 - **What:** choose the name (candidates: Kaavalu, Jothe, Sakshi …). Then set:
   - the name under the icon (today it shows `justice_chain`);
   - the permanent app ID, e.g. `in.kaavalu.app` instead of `com.example.justice_chain`;
@@ -65,6 +69,22 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 - **The screens** ("Access requests", "Release my piece") are built in the redesign.
 - **Done when:** a live Dart run of the whole story passes using the app's services: share → officer requests in the portal → victim *or* guardian releases → the portal opens the clip, with all checks passing and the audit trail showing every step.
 
+### Step 5b. Disguise mode (coding, no phones; its screens come with the redesign)
+**Decided 14-10-2026:** Calculator is the only disguise, with "112 then =" as a quick SOS. Prototype: the "App icon and disguise" screens.
+- **What:**
+  - two launcher "faces" in `AndroidManifest.xml` (`<activity-alias>`): Sakshya, and Calculator with its own icon and label;
+  - a small Kotlin method channel that enables exactly one face (`PackageManager.setComponentEnabledSetting`);
+  - the app opens on a working decoy calculator when started through the Calculator face;
+  - **PIN then =** unlocks the full app (the PIN set at registration);
+  - **112 then =** starts an SOS recording at once, without unlocking;
+  - the app preview is hidden in recent apps (`FLAG_SECURE`, which also blocks screenshots of Sakshya).
+- **Why:** Android 10+ can't hide an app completely, so the app looks like something ordinary instead. A real, working calculator survives someone opening it, unlike a fake brand app, which would also break Play Store impersonation rules.
+- **Limits to explain to users:** the real name still shows in the phone's Settings → Apps list. The icon can take a few seconds to switch, and some launchers drop it from the home screen (add it back from the app drawer). In disguise mode the full app needs the PIN; quick SOS doesn't.
+- **Done when:**
+  - unit tests cover the calculator, the PIN unlock, quick SOS, and switching the face;
+  - a release build lists both launcher entries (checked with `aapt`);
+  - on an emulator, switching the face changes the launcher icon and name. Real phones are checked in step 9.
+
 ### Step 6. Decide the open questions (decisions from you, no coding)
 These were left open in earlier docs. Each needs a yes or no before the demo:
 1. **Recovery code (Option 1):** build it, or present it as future work? Without it, a victim with no guardians who loses her phone can't recover her clips.
@@ -94,6 +114,12 @@ In this order, on a fresh install of the signed release APK with the final name:
 4. **8d and 9c on phones:** opt in to the police guardian, record, request in the portal, approve on the victim phone, then repeat with the guardian releasing instead.
 5. **10b:** a clip recorded on the phone and uploaded through Pinata plays in the officer portal.
 6. **Demo script:** run the phone steps of `DOCS/12-10-2026 simulated authority demo script.md` start to finish.
-7. **Redesign on real hardware:** screenshots of every screen, checking for layout or text issues on both phones.
+7. **Disguise:**
+   - switch to Calculator on both phones (the Vivo and Samsung launchers behave differently);
+   - check recent apps show no preview;
+   - PIN then = opens the app;
+   - 112 then = starts SOS without unlocking;
+   - switch back to Sakshya.
+8. **Redesign on real hardware:** screenshots of every screen, checking for layout or text issues on both phones.
 
 Then record the results in a device test log, commit, and tick 4c, 8d, 9c, 10b and Step 12 in the design-doc checklist.

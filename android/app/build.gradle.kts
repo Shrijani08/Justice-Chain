@@ -20,8 +20,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.justice_chain"
+        // Permanent store/install ID. Changing it makes Android treat the app as a
+        // new one (fresh install, data not carried over). The code namespace above
+        // stays com.example.justice_chain; users never see it.
+        applicationId = "in.sakshya.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

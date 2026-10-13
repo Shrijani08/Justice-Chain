@@ -31,7 +31,7 @@
         android:required="true" />
 
     <application
-        android:label="justice_chain"
+        android:label="Sakshya"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
