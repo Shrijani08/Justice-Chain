@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Calculator disguise icon, single colour for Android 13 themed icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF" android:pathData="M38.5,32 h3 v6.5 h6.5 v3 h-6.5 v6.5 h-3 v-6.5 h-6.5 v-3 h6.5 Z M60,38.5 h16 v3 h-16 Z M33.4,61.3 l2.1,-2.1 l4.5,4.5 l4.5,-4.5 l2.1,2.1 l-4.5,4.5 l4.5,4.5 l-2.1,2.1 l-4.5,-4.5 l-4.5,4.5 l-2.1,-2.1 l4.5,-4.5 Z M60,61 h16 v3 h-16 Z M60,67.5 h16 v3 h-16 Z" />
+</vector>

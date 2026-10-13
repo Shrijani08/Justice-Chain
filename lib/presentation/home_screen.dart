@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import '../core/app_services.dart';
+import '../core/disguise_service.dart';
 import '../core/emergency_controller.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/mesh_service.dart';
@@ -40,14 +41,20 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   void _setupAutomaticTrigger() {
     _distressEffectCleanup = effect(() {
       final isDistressed = aiDistressDetected.value;
+      final quickSos = sosRequested.value;
       final isReady = cameraReady.value;
       final recordingNow = isRecording.value;
 
-      if (isDistressed && isReady && !recordingNow) {
+      if (quickSos && recordingNow) {
+        sosRequested.value = false; // already recording
+      } else if ((isDistressed || quickSos) && isReady && !recordingNow) {
         logger.w(
-          "🔥 AUTOMATIC TRIGGER: Distress detected by AI! Starting camera recording.",
+          quickSos
+              ? "🔥 QUICK SOS from the disguise calculator. Starting camera recording."
+              : "🔥 AUTOMATIC TRIGGER: Distress detected by AI! Starting camera recording.",
         );
         aiDistressDetected.value = false;
+        sosRequested.value = false;
         unawaited(startEmergencyRecording());
       }
     });
@@ -444,6 +451,18 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     onPressed: _debugPrintVault,
                     icon: const Icon(Icons.storage),
                     label: const Text("Debug: Print Vault Contents"),
+                  ),
+                  // Until the redesign's settings screen: switch the launcher
+                  // face. The calculator appears the next time the app opens.
+                  ValueListenableBuilder<bool>(
+                    valueListenable: DisguiseService.enabled,
+                    builder: (context, disguised, _) => TextButton.icon(
+                      onPressed: () => DisguiseService.setEnabled(!disguised),
+                      icon: const Icon(Icons.calculate),
+                      label: Text(disguised
+                          ? "Debug: Stop Calculator Disguise"
+                          : "Debug: Disguise as Calculator"),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 12),

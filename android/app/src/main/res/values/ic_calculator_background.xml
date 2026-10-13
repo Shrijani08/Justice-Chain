@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Calculator disguise icon: a plain graphite tile, no brand's colours. -->
+    <color name="ic_calculator_background">#2F3337</color>
+</resources>

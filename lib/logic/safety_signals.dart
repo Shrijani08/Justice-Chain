@@ -10,3 +10,5 @@ final aiModelReady = signal<bool>(false);
 final aiActive = signal<bool>(false);
 final aiPrediction = signal<String>("none");
 final aiDistressDetected = signal<bool>(false);
+// Quick SOS ("112 =" on the disguise calculator): record now, without unlocking.
+final sosRequested = signal<bool>(false);

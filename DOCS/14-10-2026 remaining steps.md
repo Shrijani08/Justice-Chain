@@ -107,7 +107,38 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 - **The screens** ("Access requests", "Release my piece") are built in the redesign.
 - **Done when:** a live Dart run of the whole story passes using the app's services: share → officer requests in the portal → victim *or* guardian releases → the portal opens the clip, with all checks passing and the audit trail showing every step.
 
-### Step 5b. Disguise mode (coding, no phones; its screens come with the redesign)
+### Step 5b. Disguise mode — done 14-10-2026 (the settings switch comes with the redesign)
+**Result:**
+- **Code:**
+  - `AndroidManifest.xml`: two launcher faces. `.SakshyaFace` is a tiny activity that forwards to MainActivity, because Flutter's tooling only launches a real `<activity>`. `.CalculatorFace` is an alias, off by default, with its own label and a graphite "+ − × =" icon.
+  - `MainActivity.kt`: method channel `in.sakshya/disguise` (`getLauncherFace`, `setLauncherFace`); it turns the new face on before turning the old one off. `FLAG_SECURE` is set in release builds only, so the team can still take debug screenshots.
+  - `lib/logic/decoy_calculator.dart`: a working calculator (× ÷ before + −, %, ⌫, "Can't divide by 0").
+  - `lib/core/disguise_service.dart`: the setting, saved in Hive and needing a registered PIN; start-up repairs the launcher if it doesn't match.
+  - `lib/presentation/calculator_screen.dart` and `disguise_gate.dart`: the gate sits above the navigator and re-locks whenever the app goes to the background. The app keeps running underneath, so "112 =" records at once.
+  - Debug builds have a "Debug: Disguise as Calculator" button on the home screen until the redesign.
+- **Rules:**
+  - a code counts only as a whole entry on its own ("112 =", or a 4–6 digit "PIN =", leading zeros kept);
+  - the screen shows the number like any sum;
+  - the PIN check (Argon2id) runs in the background, so the calculator never stalls.
+- **Checks:**
+  - 23 new unit and widget tests: the calculator, the codes, PIN unlock and wrong PIN, re-locking, quick SOS, and switching the face;
+  - full suite: 142 pass;
+  - `aapt` on the release APK lists both entries (Sakshya on, Calculator off by default);
+  - on the Pixel 6 emulator (Android 13):
+    - the switch replaced Sakshya with "Calculator" in the app drawer;
+    - the start-up splash and the recent-apps card used the calculator icon;
+    - "7×6=" gave 42;
+    - "112 =" started a recording behind the calculator;
+    - PIN then = unlocked;
+    - leaving and coming back re-locked;
+    - switching back restored Sakshya;
+    - the release build's window is `SECURE` (screenshots refused).
+- **Found on the emulator, for step 9 and the user notes:**
+  - switching faces closes the app (Android removes a task whose launcher entry is switched off);
+  - Android 12+ shows the green microphone dot while AI monitoring listens, even under the calculator. That can't be hidden, and a calculator using the microphone may look odd;
+  - with no guardians, saving a clip fails ("Recording Save Failed") for the normal SOS button too, so not because of disguise mode. On phones with guardians this is checked in step 9;
+  - after the 45-second auto-stop, the status line keeps saying "RECORDING EVIDENCE..." (old behaviour; to fix in the redesign).
+- **Plan as written:**
 **Decided 14-10-2026:** Calculator is the only disguise, with "112 then =" as a quick SOS. Prototype: the "App icon and disguise" screens.
 - **What:**
   - two launcher "faces" in `AndroidManifest.xml` (`<activity-alias>`): Sakshya, and Calculator with its own icon and label;

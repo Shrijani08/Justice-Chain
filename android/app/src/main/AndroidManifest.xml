@@ -51,11 +51,37 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+        </activity>
+        <!-- The two launcher "faces"; exactly one is enabled at a time
+             (MainActivity.kt switches them). The Sakshya face is a real
+             activity that forwards to MainActivity, because Flutter's tooling
+             only launches an <activity> with a LAUNCHER filter. The Calculator
+             face is an alias, so a disguised launch opens MainActivity under
+             the Calculator name and icon. -->
+        <activity
+            android:name=".SakshyaFace"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity-alias
+            android:name=".CalculatorFace"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="@string/calculator_label"
+            android:icon="@drawable/ic_calculator"
+            android:roundIcon="@drawable/ic_calculator">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

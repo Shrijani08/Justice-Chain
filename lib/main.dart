@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'core/ai_service.dart';
 import 'core/identity_service.dart';
 import 'core/app_services.dart';
+import 'core/disguise_service.dart';
+import 'presentation/disguise_gate.dart';
 import 'presentation/home_screen.dart';
 import 'presentation/registration_screen.dart';
 
@@ -17,6 +19,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await AppServices.init();
+  await DisguiseService.init();
   
   // Check if the user is already registered before loading the UI
   bool isRegistered = false;
@@ -68,8 +71,16 @@ class JusticeChainApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // In disguise mode the recent-apps list shows "Calculator" too.
+    return ValueListenableBuilder<bool>(
+      valueListenable: DisguiseService.enabled,
+      builder: (context, disguised, _) => _app(disguised ? 'Calculator' : 'Sakshya'),
+    );
+  }
+
+  Widget _app(String title) {
     return MaterialApp(
-      title: 'Sakshya',
+      title: title,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -94,6 +105,7 @@ class JusticeChainApp extends StatelessWidget {
                   : null,
             )
           : const RegistrationScreen(),
+      builder: (context, child) => isRegistered ? DisguiseGate(child: child!) : child!,
     );
   }
 }
