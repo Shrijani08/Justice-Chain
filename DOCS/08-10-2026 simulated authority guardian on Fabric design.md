@@ -332,6 +332,13 @@ Steps 1–4 move the ledger to Fabric without any authority. Steps 5–10 are th
       - The supervisor's trail reads `shared, requested (DEMO-PORTAL-1), released (guardian), opened (officer1)`.
       - A headless-Chrome screenshot confirmed the page renders with the banner and the per-clip status.
     - Full Flutter suite: 100 pass (7 live tests skipped without a gateway).
+    - **Re-running the dry run:** the clip's hash is the SHA-256 of its content, so `JC_SAMPLE_CLIP` must be a video not used before, or the share phase stops at "Evidence already stored". Make one with a new label each time, e.g. `ffmpeg -f lavfi -i testsrc=duration=5:size=640x360:rate=25 -f lavfi -i sine=frequency=523:duration=5 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest -metadata title="run <timestamp>" build/<name>.mp4`.
+  - **Full re-verification, 12-10-2026 (evening):** everything recorded as done for Steps 3–10 and 12 was re-checked live, not just re-read.
+    - The network was restarted with `start-network.sh`: 8 containers, all three peers at block 73.
+    - The committed definition is `justiceledger` 1.5, sequence 7, approved by Org1MSP, Org2MSP and SimPoliceMSP, with the `authorityShares_SimPolice` collection as designed. The deployed package is byte-identical to the repo's chaincode.
+    - Unit tests: chaincode 30/30, portal 5/5, Flutter 100 pass (7 live tests skipped). Then the live tests: 4b anchoring, Step 8 (`check-authority-share.sh`: all checks passed) and Step 9 (`check-custody.sh verify`: 11/11).
+    - Step 10 with a fresh video: the clip was in block 101; the portal stopped at "1 of 2 pieces" before the release; after it, all 9 checks passed and the served video was byte-identical to the original.
+    - Failure tests: 21/21 (17 network + 4 portal). SimPolice ended active with the same desk key.
   - [ ] **10b. The real check**: a clip recorded **on the phone** and uploaded to IPFS through Pinata plays in the portal. Done with the phone session (4c, 8d, 9c).
 - ~~**Step 11: Second institution.**~~ **Dropped 08-10-2026** (decision 2 in section 8). Presented as future work: a court order as the second piece.
 - [x] **Step 12: Failure tests and demo script.** *(done 12-10-2026, except the phone parts of the demo)* Wrong role, Auditor reading the police collection, police with one piece, self-approval, release without a valid signature, SimPolice removed, tampered IPFS file. Write the demo script and test log in `DOCS/`, and add the disclosure slide.
