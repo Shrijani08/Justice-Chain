@@ -25,7 +25,7 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 - **Why:** they are finished and tested; leaving them uncommitted risks losing them or mixing them into later work.
 - **Done when:** `git status` shows only the hardware files.
 
-### Step 2. Pick the app's name and permanent ID (decision from you, then 30 minutes)
+### Step 2. Pick the app's name and permanent ID — done 14-10-2026, commit `914af2e7` (final icon still to choose)
 **Decided 14-10-2026:**
 - **Name:** **Sakshya** (साक्ष्य, "evidence, testimony").
 - **App ID:** `in.sakshya.app`. Only `applicationId` changes; the code's `namespace` and Kotlin package stay `com.example.justice_chain`, since users never see them.
@@ -38,7 +38,12 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 - **Needed from you:** the name, and an icon idea (or I draw one in the new design style).
 - **Done when:** the release APK installs with the new name and icon (checked with `aapt`; seen on the phone in step 9).
 
-### Step 3. A real signing key for the release APK (needs you once, 30 minutes)
+### Step 3. A real signing key for the release APK — done 14-10-2026
+**Result:**
+- **Key:** `android/sakshya-upload.jks` (alias `upload`, RSA 2048, valid 10,000 days), with its password in `android/key.properties`. Both are git-ignored.
+- **Build:** `android/app/build.gradle.kts` signs release builds with this key, and falls back to the debug key with a warning when `key.properties` is missing.
+- **Verified:** `apksigner verify --print-certs` reports `CN=Sakshya, O=Justice-Chain project, L=Bengaluru, ST=Karnataka, C=IN`. Certificate SHA-256 `f3bfb660ff94c45121dd3a260f065df4da4e46a11cf76d886f28a6bd34438d10`; every future release must show this same fingerprint.
+- **Backup:** keep the `.jks` and `key.properties` together, off this laptop.
 - **What:**
   - create a signing key (a `.jks` file and a password);
   - store the password in `android/key.properties`, kept out of git;
