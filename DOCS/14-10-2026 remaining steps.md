@@ -12,7 +12,7 @@ This is the single to-do list from today until the demo. Work through it top to 
 | One-guardian mode (Option 2) | Built, committed `963e441d`, unit-tested; **never run on a phone** | Stand-alone check 14-10 |
 | Ledger: app ↔ gateway ↔ Fabric anchoring | Built and live-tested from Dart; **not yet from a phone** | Live tests 12-10 |
 | Police authority on the server (Steps 5–10, 12) | Built, committed, all live checks and 21/21 failure tests passed | Full re-verification 12-10 evening |
-| Police authority **inside the app** (8d, 9c) | **Not built.** The app never calls `/nodes`, `/guardians`, `/authority-shares`, `/access-requests` or `/releases`; only tests do | Code search today |
+| Police authority **inside the app** (8d, 9c) | Logic built and live-tested from Dart (steps 4 and 5 below); screens come with the redesign; **not yet on a phone** | Live tests 14-10 |
 | Release APK | Builds, has internet permission; **signed with the temporary debug key**, app ID still `com.example.justice_chain`, launcher name `justice_chain` | `build.gradle.kts`, manifest |
 | Uncommitted | Release-build fix (manifest + `proguard-rules.pro`), DOCS edits | `git status` |
 
@@ -81,7 +81,24 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
   - a live Dart test, using the app's own services against the real gateway, registers a phone, syncs guardians and shares a piece, and `check-authority-share.sh` confirms the officer can unseal it;
   - the full suite stays green.
 
-### Step 5. App part of approvals (9c), logic first (coding, no phones)
+### Step 5. App part of approvals (9c), logic first — done 14-10-2026 (screens come with the redesign)
+**Result:**
+- **Code:** in `authority_service.dart`:
+  - `openRequestsForMyRecordings()` (victim);
+  - `openRequestsIGuard()` (guardian; only clips this phone holds its own piece of);
+  - `approveRequest(id)`, which queues the new outbox job `authority_release`.
+  - Gateway calls `listAccessRequests`, `getAccessRequest` and `releaseShare` are in `fabric_ledger_service.dart`.
+- **Rules:**
+  - the victim releases a fresh piece (new index from the record's counter);
+  - a guardian re-locks the piece the victim gave them;
+  - the locked piece is saved until the release succeeds, so a retry sends the identical piece, which the gateway needs to finish a half-done release;
+  - a request already released elsewhere sends nothing;
+  - a revoked authority is refused.
+- **Checks:**
+  - 7 new unit tests (19 in `test/authority_service_test.dart`);
+  - a live run, `test/release_app_live_test.dart`, passed with the officer working through the real portal: a guardian approved one clip and the victim another, the portal opened both with every check passing and the video byte-identical, and each audit trail reads `shared, requested, released, opened`;
+  - full suite: 119 pass.
+- **Plan as written:**
 - **What:**
   1. **Victim side:** list access requests from the police for my recordings, and approve one. Approving makes a new key piece, locks it to the police's key and releases it through the gateway.
   2. **Guardian side:** "Release my piece", which re-locks the guardian's own piece to the police's key and releases it.

@@ -32,6 +32,7 @@ class OutboxService {
   static const String jobRegisterNode = 'ledger_register';
   static const String jobGuardianSync = 'ledger_guardians';
   static const String jobAuthorityShare = 'authority_share';
+  static const String jobAuthorityRelease = 'authority_release';
 
   static const Set<String> _meshJobTypes = {jobKeyShare, jobMeshRelay, jobShareForward};
 
@@ -246,6 +247,8 @@ class OutboxService {
         return AuthorityService.registerThisPhone();
       case jobGuardianSync:
         return AuthorityService.syncGuardians();
+      case jobAuthorityRelease:
+        return AuthorityService.releaseForRequest(payload['requestId'] as String);
     }
     final recordKey = payload['recordKey'] as String;
     switch (type) {

@@ -13,7 +13,9 @@ import 'package:justice_chain/core/authority_service.dart';
 import 'package:justice_chain/core/evidence_encryptor.dart';
 import 'package:justice_chain/core/identity_service.dart';
 import 'package:justice_chain/core/ledger/fabric_ledger_service.dart';
+import 'package:justice_chain/core/mesh_service.dart';
 import 'package:justice_chain/core/outbox_service.dart';
+import 'package:justice_chain/core/shamir.dart';
 import 'package:justice_chain/logic/guardian_manager.dart';
 
 String _sha256Hex(List<int> bytes) => crypto.sha256.convert(bytes).toString();
@@ -25,6 +27,8 @@ class _FakeGateway {
   final guardians = <String, Map<String, dynamic>>{};
   final authorities = <String, Map<String, dynamic>>{};
   final shared = <String>{};
+  final requests = <String, Map<String, dynamic>>{};
+  bool failNextRelease = false;
   final posts = <String, List<Map<String, dynamic>>>{};
 
   http.Response _json(Object body, [int status = 200]) => http.Response(jsonEncode(body), status);
@@ -41,6 +45,10 @@ class _FakeGateway {
           return _json(guardians[id] == null ? {'found': false, 'victimNodeId': id} : {'found': true, ...guardians[id]!});
         case 'authorities':
           return _json(authorities[id] == null ? {'found': false, 'mspId': id} : {'found': true, ...authorities[id]!});
+        case 'access-requests':
+          return _json(requests.values.where((r) => r['victimNodeId'] == id).toList());
+        case 'access-request':
+          return _json(requests[id] == null ? {'found': false, 'requestId': id} : {'found': true, ...requests[id]!});
       }
       return _json({'error': 'Not found'}, 404);
     }
@@ -60,6 +68,27 @@ class _FakeGateway {
         }
         guardians[victim] = {'victimNodeId': victim, 'guardians': body['guardianNodeIds'], 'sequence': seq};
         return _json(guardians[victim]!);
+      case '/releases':
+        if (failNextRelease) {
+          failNextRelease = false;
+          return _json({'error': 'Fabric network unavailable'}, 503);
+        }
+        final request = requests[body['requestId']]!;
+        final pieceHash = _sha256Hex(base64Decode(body['sealedShare'] as String));
+        if (request['status'] == 'released') {
+          final same = request['releasedBy'] == body['releaserNodeId'] && request['releasedShareHash'] == pieceHash;
+          return same ? _json(request) : _json({'error': 'Access request is already released'}, 400);
+        }
+        final victim = request['victimNodeId'];
+        final isGuardian = (guardians[victim]?['guardians'] as List?)?.contains(body['releaserNodeId']) ?? false;
+        if (body['releaserNodeId'] != victim && !isGuardian) {
+          return _json({'error': 'Only the victim or one of their registered guardians may release a piece'}, 400);
+        }
+        if (body['shareX'] == request['heldShareX']) {
+          return _json({'error': 'SimPoliceMSP already holds piece ${body['shareX']}'}, 400);
+        }
+        request.addAll({'status': 'released', 'releasedBy': body['releaserNodeId'], 'releasedShareHash': pieceHash});
+        return _json(request);
       case '/authority-shares':
         final key = '${body['manifestHash']}|${body['authorityMsp']}';
         if (shared.contains(key)) return _json({'error': 'This clip is already shared with ${body['authorityMsp']}'}, 400);
@@ -84,6 +113,7 @@ void main() {
     Hive.init(tempDir.path);
     vault = await Hive.openBox('vault_box');
     await Hive.openBox(OutboxService.boxName);
+    await Hive.openBox(MeshService.receivedSharesBoxName);
     OutboxService.manageAdvertising = false;
     FlutterSecureStorage.setMockInitialValues({});
     IdentityService.resetCacheForTest();
@@ -283,6 +313,166 @@ void main() {
       gateway.authorities[AuthorityService.simPoliceMsp]!['revoked'] = true;
       await expectLater(AuthorityService.shareRecordWithAuthority(key), throwsA(isA<StateError>()));
       expect(gateway.posts['/authority-shares'], isNull);
+    });
+
+    group('access requests', () {
+      const victim = 'vvvvvvvvvvvvvvvv';
+
+      /// Shares [key] with the police and files a request for it, as the portal would.
+      Future<String> requestFor(String key, {String? victimNodeId, String status = 'open'}) async {
+        await AuthorityService.shareRecordWithAuthority(key);
+        final id = 'req-${gateway.requests.length + 1}';
+        gateway.requests[id] = {
+          'requestId': id,
+          'manifestHash': key,
+          'authorityMsp': AuthorityService.simPoliceMsp,
+          'victimNodeId': victimNodeId ?? myNodeId,
+          'heldShareX': (vault.get(key) as Map)['authorityShareX'],
+          'threshold': 2,
+          'requestedBy': 'Officer',
+          'reason': 'Assault complaint',
+          'caseRef': 'FIR 12/2026',
+          'status': status,
+          'requestedAt': 1760000000,
+        };
+        return id;
+      }
+
+      /// What the police desk can open: its held piece plus the released one.
+      Future<void> expectPoliceCanOpen(String key) async {
+        final held = gateway.posts['/authority-shares']!.last['sealedShare'] as String;
+        final released = gateway.posts['/releases']!.last['sealedShare'] as String;
+        final pieces = [
+          for (final s in [held, released])
+            await EvidenceEncryptor.unsealGuardianShare(
+              sealedShareB64: s,
+              ownX25519KeyPair: deskKey,
+              senderX25519PublicKeyB64: myX25519,
+            ),
+        ];
+        final plaintext = await EvidenceEncryptor.decryptFileWithShares(
+          cipherPath: (vault.get(key) as Map)['path'] as String,
+          shares: pieces,
+          threshold: 2,
+        );
+        expect(_sha256Hex(plaintext), key);
+      }
+
+      /// Gives this phone a guardian piece of [key], as the victim's phone would over the mesh.
+      Future<ShamirShare> holdGuardianPiece(String key, String victimNodeId, {String? forwardedBy}) async {
+        final piece = await EvidenceEncryptor.unsealGuardianShare(
+          sealedShareB64: ((vault.get(key) as Map)['guardianShares'] as Map)['gggggggggggggggg'] as String,
+          ownX25519KeyPair: guardianKey,
+          senderX25519PublicKeyB64: myX25519,
+        );
+        await Hive.box(MeshService.receivedSharesBoxName).put('$key:${forwardedBy ?? victimNodeId}', {
+          'manifestHash': key,
+          'victimNodeId': victimNodeId,
+          'senderX25519': myX25519,
+          'sealedShare': await EvidenceEncryptor.sealShare(piece, myX25519),
+          'forwardedBy': forwardedBy,
+        });
+        return piece;
+      }
+
+      test('the victim approves with a new piece that, with the held one, opens the clip', () async {
+        final key = await recordWith(threshold: 2);
+        final id = await requestFor(key);
+        final x = (vault.get(key) as Map)['nextShareX'] as int;
+
+        await AuthorityService.releaseForRequest(id);
+
+        final body = gateway.posts['/releases']!.single;
+        expect(body['releaserNodeId'], myNodeId);
+        expect(body['shareX'], x);
+        final payload = 'justice-chain/release-share/v1|$id|$key|SimPoliceMSP|$x|'
+            '${_sha256Hex(base64Decode(body['sealedShare'] as String))}';
+        expect(body['signature'], await AnchoringService.signAnchor(_sha256Hex(utf8.encode(payload))));
+        expect((vault.get(key) as Map)['nextShareX'], x + 1);
+        final kept = (vault.get('authority_releases') as Map)[id] as Map;
+        expect(kept['releasedAt'], isNotNull);
+        expect(kept.containsKey('sealedShare'), isFalse, reason: 'not kept after success');
+        await expectPoliceCanOpen(key);
+      });
+
+      test('a retry after a failure sends the very same piece', () async {
+        final key = await recordWith(threshold: 2);
+        final id = await requestFor(key);
+        gateway.failNextRelease = true;
+
+        await expectLater(AuthorityService.releaseForRequest(id), throwsStateError);
+        await AuthorityService.releaseForRequest(id);
+
+        final sent = gateway.posts['/releases']!;
+        expect(sent, hasLength(2));
+        expect(sent[1]['sealedShare'], sent[0]['sealedShare']);
+        expect(sent[1]['shareX'], sent[0]['shareX']);
+        expect(gateway.requests[id]!['status'], 'released');
+        await expectPoliceCanOpen(key);
+      });
+
+      test('a guardian re-seals the piece the victim gave them', () async {
+        final key = await recordWith(threshold: 2);
+        final id = await requestFor(key, victimNodeId: victim);
+        gateway.guardians[victim] = {'victimNodeId': victim, 'guardians': [myNodeId], 'sequence': 1};
+        final piece = await holdGuardianPiece(key, victim);
+
+        await AuthorityService.releaseForRequest(id);
+
+        final body = gateway.posts['/releases']!.single;
+        expect(body['releaserNodeId'], myNodeId);
+        expect(body['shareX'], piece.x);
+        await expectPoliceCanOpen(key);
+      });
+
+      test('a guardian sees only open requests for clips it holds its own piece of', () async {
+        // Each recording has its own guardian key, so hold its piece right away.
+        final mine = await recordWith(threshold: 2);
+        await holdGuardianPiece(mine, victim);
+        final open = await requestFor(mine, victimNodeId: victim);
+        final forwarded = await recordWith(threshold: 2);
+        await holdGuardianPiece(forwarded, victim, forwardedBy: 'cccccccccccccccc');
+        await requestFor(forwarded, victimNodeId: victim);
+        final released = await recordWith(threshold: 2);
+        await holdGuardianPiece(released, victim);
+        await requestFor(released, victimNodeId: victim, status: 'released');
+        final ownOpen = await requestFor(await recordWith(threshold: 2));
+
+        expect([for (final r in await AuthorityService.openRequestsIGuard()) r['requestId']], [open]);
+        expect([for (final r in await AuthorityService.openRequestsForMyRecordings()) r['requestId']], [ownOpen]);
+      });
+
+      test('an already-released request sends nothing', () async {
+        final key = await recordWith(threshold: 2);
+        final id = await requestFor(key, status: 'released');
+        await AuthorityService.releaseForRequest(id);
+        expect(gateway.posts['/releases'], isNull);
+      });
+
+      test('refuses a revoked authority and a recording not on this phone', () async {
+        final key = await recordWith(threshold: 2);
+        final id = await requestFor(key);
+        gateway.authorities[AuthorityService.simPoliceMsp]!['revoked'] = true;
+        await expectLater(AuthorityService.releaseForRequest(id), throwsStateError);
+
+        gateway.authorities[AuthorityService.simPoliceMsp]!['revoked'] = false;
+        await vault.delete(key);
+        await expectLater(AuthorityService.releaseForRequest(id), throwsStateError);
+        expect(gateway.posts['/releases'], isNull);
+      });
+
+      test('approving queues the release in the outbox, which sends it', () async {
+        final key = await recordWith(threshold: 2);
+        final id = await requestFor(key);
+        await AuthorityService.approveRequest(id);
+        // approveRequest starts the outbox without waiting; let that run finish.
+        final outbox = Hive.box(OutboxService.boxName);
+        for (var i = 0; i < 200 && outbox.isNotEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(Hive.box(OutboxService.boxName).isEmpty, isTrue);
+        expect(gateway.requests[id]!['status'], 'released');
+      });
     });
   });
 

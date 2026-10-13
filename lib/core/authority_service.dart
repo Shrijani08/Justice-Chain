@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 
@@ -12,6 +13,7 @@ import 'evidence_encryptor.dart';
 import 'evidence_vault_service.dart';
 import 'identity_service.dart';
 import 'ledger/fabric_ledger_service.dart';
+import 'mesh_service.dart';
 import 'outbox_service.dart';
 
 /// Demo builds only: `flutter run --dart-define=DEMO_AUTHORITY=true`. The
@@ -247,5 +249,123 @@ class AuthorityService {
       };
     await _box.put(recordKey, record);
     developer.log('Shared key piece $x of $recordKey with $msp.', name: 'JusticeChain.Authority');
+  }
+
+  // Access requests and releases (design doc Step 9, app part)
+
+  static const String _releasesKey = 'authority_releases';
+
+  /// Open requests the authority filed for this phone's own recordings.
+  static Future<List<Map<String, dynamic>>> openRequestsForMyRecordings() async {
+    final me = await IdentityService.getMyNodeId();
+    final requests = await _requireLedger().listAccessRequests(me);
+    return requests.where((r) => r['status'] == 'open').toList();
+  }
+
+  /// Open requests for recordings of people this phone protects, limited to
+  /// clips this phone holds its own key piece for (only those it can release).
+  static Future<List<Map<String, dynamic>>> openRequestsIGuard() async {
+    final ownPieces = _ownGuardianPieces();
+    final victims = ownPieces.values.map((p) => p['victimNodeId'] as String?).whereType<String>().toSet();
+    final ledger = _requireLedger();
+    final open = <Map<String, dynamic>>[];
+    for (final victim in victims) {
+      for (final r in await ledger.listAccessRequests(victim)) {
+        if (r['status'] == 'open' && ownPieces.containsKey(r['manifestHash'])) open.add(r);
+      }
+    }
+    return open;
+  }
+
+  /// The pieces other people gave this phone as their guardian, by recording
+  /// (forwarded copies from co-guardians excluded: only its own can be released).
+  static Map<String, Map> _ownGuardianPieces() => {
+        for (final s in Hive.box(MeshService.receivedSharesBoxName).values.whereType<Map>())
+          if (s['forwardedBy'] == null && s['manifestHash'] != null) s['manifestHash'] as String: s,
+      };
+
+  /// The user's approval of [requestId]: queued, so it retries offline.
+  static Future<void> approveRequest(String requestId) async {
+    await OutboxService.enqueue(
+      '${OutboxService.jobAuthorityRelease}:$requestId',
+      OutboxService.jobAuthorityRelease,
+      {'requestId': requestId},
+    );
+    unawaited(OutboxService.process());
+  }
+
+  /// Releases one key piece for [requestId] to its authority. The victim
+  /// makes a new piece of the recording's key; a guardian re-seals the piece
+  /// the victim gave them. The sealed piece is kept until the release
+  /// succeeds, because the gateway can only finish a half-done release when
+  /// it is sent the same piece again.
+  static Future<void> releaseForRequest(String requestId) async {
+    final ledger = _requireLedger();
+    final request = await ledger.getAccessRequest(requestId);
+    if (request['found'] != true) throw StateError('Access request $requestId not found');
+    final releases = Map<String, dynamic>.from(_box.get(_releasesKey, defaultValue: {}) as Map);
+    if (request['status'] != 'open' && releases[requestId] == null) return; // released elsewhere
+
+    await registerThisPhone();
+    final me = await IdentityService.getMyNodeId();
+    final hash = request['manifestHash'] as String;
+    final msp = request['authorityMsp'] as String;
+
+    var pending = releases[requestId] as Map?;
+    if (pending == null) {
+      final authority = await ledger.getAuthority(msp);
+      if (authority['found'] != true || authority['revoked'] == true) {
+        throw StateError('$msp is not an active registered authority');
+      }
+      final authorityKey = authority['publicKey'] as String;
+      final int x;
+      final String sealed;
+      if (request['victimNodeId'] == me) {
+        final raw = _box.get(hash);
+        if (raw is! Map || raw['wrappedKey'] == null) throw StateError('Recording $hash is not on this phone');
+        final record = Map<String, dynamic>.from(raw);
+        // A fresh index from the record's counter, so it differs from every
+        // guardian's piece and from the one the authority already holds.
+        final next = record['nextShareX'] as int?;
+        if (next == null) throw StateError('Recording $hash has no key-piece counter');
+        x = next;
+        record['nextShareX'] = x + 1;
+        await _box.put(hash, record);
+        sealed = await EvidenceEncryptor.issueGuardianShare(
+          wrappedKeyB64: record['wrappedKey'] as String,
+          x: x,
+          guardianX25519PublicKeyB64: authorityKey,
+          threshold: EvidenceVaultService.recordThreshold(record),
+        );
+      } else {
+        final own = _ownGuardianPieces()[hash];
+        if (own == null) throw StateError('This phone holds no key piece for $hash');
+        final piece = await EvidenceEncryptor.unsealGuardianShare(
+          sealedShareB64: own['sealedShare'] as String,
+          ownX25519KeyPair: await IdentityService.getX25519KeyPair(),
+          senderX25519PublicKeyB64: own['senderX25519'] as String,
+        );
+        x = piece.x;
+        sealed = await EvidenceEncryptor.sealShare(piece, authorityKey);
+      }
+      pending = {'x': x, 'sealedShare': sealed, 'manifestHash': hash, 'msp': msp};
+      releases[requestId] = pending;
+      await _box.put(_releasesKey, releases);
+    }
+
+    final x = pending['x'] as int;
+    final sealed = pending['sealedShare'] as String;
+    final payload = 'justice-chain/release-share/v1|$requestId|$hash|$msp|$x|${_sha256Hex(base64Decode(sealed))}';
+    await ledger.releaseShare({
+      'requestId': requestId,
+      'releaserNodeId': me,
+      'shareX': x,
+      'sealedShare': sealed,
+      'signature': await _signAction(payload),
+    });
+
+    releases[requestId] = {...pending, 'releasedAt': DateTime.now().toIso8601String()}..remove('sealedShare');
+    await _box.put(_releasesKey, releases);
+    developer.log('Released key piece $x of $hash to $msp for request $requestId.', name: 'JusticeChain.Authority');
   }
 }

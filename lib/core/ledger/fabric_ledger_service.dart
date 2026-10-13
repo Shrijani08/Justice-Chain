@@ -101,6 +101,20 @@ class FabricLedgerService implements LedgerService {
   Future<Map<String, dynamic>> shareWithAuthority(Map<String, Object?> body) =>
       _post('/authority-shares', body);
 
+  /// Every access request an authority filed for a victim's recordings.
+  Future<List<Map<String, dynamic>>> listAccessRequests(String victimNodeId) async =>
+      List<Map<String, dynamic>>.from(
+        await _get('/access-requests/${Uri.encodeComponent(victimNodeId)}') as List,
+      );
+
+  /// One access request, or `found: false`.
+  Future<Map<String, dynamic>> getAccessRequest(String requestId) async =>
+      await _get('/access-request/${Uri.encodeComponent(requestId)}') as Map<String, dynamic>;
+
+  /// Approves a request by releasing one sealed key piece to its authority
+  /// (ReleaseShare + DeliverReleasedShare; safe to retry with the same piece).
+  Future<Map<String, dynamic>> releaseShare(Map<String, Object?> body) => _post('/releases', body);
+
   @override
   Future<AnchorVerificationResult> verifyEvidence(String manifestHashHex) async {
     final record = await _get('/verify/${Uri.encodeComponent(manifestHashHex)}') as Map<String, dynamic>;
