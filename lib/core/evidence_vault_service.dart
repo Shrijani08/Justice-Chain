@@ -8,6 +8,7 @@ import 'dart:developer' as developer;
 import '../logic/guardian_manager.dart';
 import '../logic/safety_signals.dart';
 import 'anchoring_service.dart';
+import 'authority_service.dart';
 import 'evidence_encryptor.dart';
 import 'identity_service.dart';
 import 'mesh_service.dart';
@@ -110,9 +111,17 @@ class EvidenceVaultService {
         threshold: thresholdFor(guardians.length),
       );
 
+      // Demo builds: the authority this recording will give a key piece to,
+      // fixed now like the threshold. Never for single-guardian recordings,
+      // where one piece alone would open the clip.
+      final authorityMsp = sealed.threshold >= EvidenceEncryptor.guardianQuorum
+          ? AuthorityService.authorityForNewRecordings()
+          : null;
+
       // Keyed by content hash, not by insertion position, so the record
       // stays addressable even if other entries are added or removed.
       await _vaultBox.put(sealed.plaintextHash, {
+        if (authorityMsp != null) 'authorityMsp': authorityMsp,
         'path': sealed.cipherPath,
         'hash': sealed.plaintextHash,
         'wrappedKey': sealed.wrappedKeyB64,
@@ -213,6 +222,10 @@ class EvidenceVaultService {
     if (txHash != null) record['anchorTxHash'] = txHash;
     await _vaultBox.put(recordKey, record);
     appStatus.value = "Evidence Secured, Uploaded & Anchored!";
+
+    if (record['authorityMsp'] != null && record['authorityShare'] == null) {
+      await OutboxService.enqueueAuthorityShare(recordKey);
+    }
   }
 
   /// Gives every guardian that has a usable key, but no share yet for a
@@ -269,6 +282,10 @@ class EvidenceVaultService {
           await OutboxService.enqueueUpload(recordKey);
         case 'uploaded_to_ipfs':
           await OutboxService.enqueueAnchor(recordKey);
+        case 'anchored':
+          if (raw['authorityMsp'] != null && raw['authorityShare'] == null) {
+            await OutboxService.enqueueAuthorityShare(recordKey);
+          }
       }
 
       if (status != 'anchored') {

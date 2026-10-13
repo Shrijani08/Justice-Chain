@@ -52,7 +52,23 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 - **Needed from you:** a password, and somewhere safe for a backup copy of the key (not the repo).
 - **Done when:** `flutter build apk --release` succeeds and `apksigner verify` shows your key, not the debug one.
 
-### Step 4. App part of sharing with the police (8d), logic first (coding, no phones)
+### Step 4. App part of sharing with the police (8d), logic first — done 14-10-2026 (screens come with the redesign)
+**Result:**
+- **Code:** `lib/core/authority_service.dart` plus gateway calls in `fabric_ledger_service.dart`, with three new outbox jobs (`ledger_register`, `ledger_guardians`, `authority_share`).
+- **Hooks:** app start (register and sync), adding or removing a guardian (re-sync), and after anchoring (share).
+- **Rules:**
+  - demo builds only (`--dart-define=DEMO_AUTHORITY=true`) and `LEDGER=fabric`;
+  - the opt-in applies only to recordings made after it;
+  - single-guardian recordings are never shared;
+  - guardians who haven't registered are added later;
+  - the version number is read back from the ledger;
+  - retries are harmless.
+- **Checks:**
+  - 12 unit tests (`test/authority_service_test.dart`), including the police piece plus a guardian piece decrypting the clip;
+  - a live run with the app's services against the real gateway (`test/authority_app_live_test.dart`) passed;
+  - `check-authority-share.sh` passed: the officer unsealed exactly the app's piece (x=2), the Auditor has no copy, and block 115 holds only a hash;
+  - full suite: 112 pass.
+- **Still for the redesign:** the opt-in switch with the "SIMULATED / call 112" notice on the Guardians screen. Until then, `AuthorityService.setShareWithAuthority(true)` turns it on.
 - **What:** teach the app the four things only the tests do today:
   1. **Register this phone** once on the ledger (its ID and keys, signed by the phone). Safe to repeat.
   2. **Keep the guardian list in sync** on the ledger whenever a guardian is added or removed, so the ledger knows who may release pieces.

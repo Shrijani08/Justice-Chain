@@ -46,6 +46,17 @@ class FabricLedgerService implements LedgerService {
   Future<dynamic> _get(String path) async =>
       _decode(await _client.get(Uri.parse('$_base$path')).timeout(_queryTimeout));
 
+  Future<Map<String, dynamic>> _post(String path, Map<String, Object?> body) async {
+    final response = await _client
+        .post(
+          Uri.parse('$_base$path'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
+        .timeout(_submitTimeout);
+    return await _decode(response) as Map<String, dynamic>;
+  }
+
   @override
   Future<String> recordAnchor({
     required String manifestHashHex,
@@ -54,22 +65,41 @@ class FabricLedgerService implements LedgerService {
     required String nodeId,
     required String signatureHex,
   }) async {
-    final response = await _client
-        .post(
-          Uri.parse('$_base/anchor'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'manifestHash': manifestHashHex,
-            'cid': cid,
-            'capturedAt': capturedAt.millisecondsSinceEpoch ~/ 1000,
-            'nodeId': nodeId,
-            'signature': signatureHex,
-          }),
-        )
-        .timeout(_submitTimeout);
-    final record = await _decode(response) as Map<String, dynamic>;
+    final record = await _post('/anchor', {
+      'manifestHash': manifestHashHex,
+      'cid': cid,
+      'capturedAt': capturedAt.millisecondsSinceEpoch ~/ 1000,
+      'nodeId': nodeId,
+      'signature': signatureHex,
+    });
     return record['txId'] as String;
   }
+
+  // Phone registry, guardian list and authority sharing (Fabric only; the
+  // EVM ledger has no equivalent). Bodies are built and signed by
+  // AuthorityService; these calls only carry them.
+
+  /// Registers a phone's ID and public keys (RegisterNode).
+  Future<Map<String, dynamic>> registerNode(Map<String, Object?> body) => _post('/nodes', body);
+
+  /// A registered phone, or `found: false`.
+  Future<Map<String, dynamic>> getNode(String nodeId) async =>
+      await _get('/nodes/${Uri.encodeComponent(nodeId)}') as Map<String, dynamic>;
+
+  /// A victim's guardian list on the ledger, or `found: false`.
+  Future<Map<String, dynamic>> getGuardians(String victimNodeId) async =>
+      await _get('/guardians/${Uri.encodeComponent(victimNodeId)}') as Map<String, dynamic>;
+
+  /// Replaces the victim's guardian list (SetGuardians).
+  Future<Map<String, dynamic>> setGuardians(Map<String, Object?> body) => _post('/guardians', body);
+
+  /// A registered authority (name, X25519 public key, revoked flag), or `found: false`.
+  Future<Map<String, dynamic>> getAuthority(String mspId) async =>
+      await _get('/authorities/${Uri.encodeComponent(mspId)}') as Map<String, dynamic>;
+
+  /// Gives an authority one sealed key piece, with the victim's consent (ShareWithAuthority).
+  Future<Map<String, dynamic>> shareWithAuthority(Map<String, Object?> body) =>
+      _post('/authority-shares', body);
 
   @override
   Future<AnchorVerificationResult> verifyEvidence(String manifestHashHex) async {

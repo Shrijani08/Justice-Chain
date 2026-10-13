@@ -6,6 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'authority_service.dart';
 import 'evidence_vault_service.dart';
 import 'mesh_service.dart';
 
@@ -28,6 +29,9 @@ class OutboxService {
   static const String jobMeshRelay = 'mesh_relay';
   static const String jobRelayUpload = 'relay_upload';
   static const String jobShareForward = 'share_forward';
+  static const String jobRegisterNode = 'ledger_register';
+  static const String jobGuardianSync = 'ledger_guardians';
+  static const String jobAuthorityShare = 'authority_share';
 
   static const Set<String> _meshJobTypes = {jobKeyShare, jobMeshRelay, jobShareForward};
 
@@ -95,6 +99,24 @@ class OutboxService {
       'failed': false,
     });
   }
+
+  /// Like [enqueue], but replaces a queued job with the same [id] so it runs
+  /// now with fresh attempts, instead of waiting out an earlier backoff.
+  static Future<void> enqueueNow(
+    String id,
+    String type,
+    Map<String, dynamic> payload,
+  ) async {
+    await _box.delete(id);
+    await enqueue(id, type, payload);
+  }
+
+  /// Gives a recording's authority its key piece once the record is anchored.
+  static Future<void> enqueueAuthorityShare(String recordKey) => enqueue(
+        '$jobAuthorityShare:$recordKey',
+        jobAuthorityShare,
+        {'recordKey': recordKey},
+      );
 
   static Future<void> enqueueUpload(String recordKey) =>
       enqueue('$jobUpload:$recordKey', jobUpload, {'recordKey': recordKey});
@@ -218,8 +240,17 @@ class OutboxService {
   static Future<void> _dispatch(String type, Map<String, dynamic> payload) {
     final override = dispatchOverride;
     if (override != null) return override(type, payload);
+    // Ledger registry jobs aren't about one recording.
+    switch (type) {
+      case jobRegisterNode:
+        return AuthorityService.registerThisPhone();
+      case jobGuardianSync:
+        return AuthorityService.syncGuardians();
+    }
     final recordKey = payload['recordKey'] as String;
     switch (type) {
+      case jobAuthorityShare:
+        return AuthorityService.shareRecordWithAuthority(recordKey);
       case jobUpload:
         return EvidenceVaultService.uploadRecord(recordKey);
       case jobAnchor:

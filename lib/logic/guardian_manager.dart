@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:developer' as developer;
 
+import '../core/authority_service.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/mesh_service.dart';
 import '../core/outbox_service.dart';
@@ -64,6 +65,7 @@ class GuardianManager {
         await EvidenceVaultService.issueMissingGuardianShares();
       }
       await EvidenceVaultService.resumePendingWork();
+      await AuthorityService.requestGuardianSync();
       unawaited(OutboxService.process());
     } catch (e) {
       developer.log('Catching up new guardian failed', error: e, name: 'JusticeChain.Guardian');
@@ -110,6 +112,8 @@ class GuardianManager {
     await _box.put(_guardiansKey, guardians);
 
     final cancelled = await OutboxService.cancelJobsForNode(nodeId);
+    // They must also stop being able to release this phone's key pieces.
+    await AuthorityService.requestGuardianSync();
     try {
       await MeshService.disconnectNode(nodeId);
     } catch (e) {

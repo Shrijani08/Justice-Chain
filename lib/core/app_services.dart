@@ -1,5 +1,6 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:logger/logger.dart';
+import 'authority_service.dart';
 import 'evidence_vault_service.dart';
 import 'identity_service.dart';
 import 'mesh_service.dart';
@@ -35,6 +36,10 @@ class AppServices {
     try {
       await EvidenceVaultService.issueMissingGuardianShares();
       await EvidenceVaultService.resumePendingWork();
+      // Fabric only: register this phone and keep its guardian list current
+      // on the ledger (both no-ops once done).
+      await AuthorityService.requestRegistration();
+      await AuthorityService.requestGuardianSync();
     } catch (e) {
       logger.e("Resuming pending evidence work failed: $e");
     }
