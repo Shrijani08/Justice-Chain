@@ -187,6 +187,14 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
    - **Why this order:** the laptop setup already passed every live test. A tunnel makes it reachable over mobile data, so college Wi-Fi blocking phone-to-laptop traffic no longer matters. The cloud is added early (around days 3–7, not the last days) so its problems surface with time to fix them. On demo day: use the cloud if it's healthy, otherwise switch to the laptop in about a minute.
 3. **AI false triggers:** keep as a known limitation for the presentation, or run the one-afternoon experiment from `DOCS/08-10-2026 AI false trigger analysis.md` (step 1 there) first?
 
+### Step 6c. App icon (decision deferred, 15-10-2026)
+- **The tag placeholder stays** until you give the final icon.
+- **Draft:** a solid "S" mark (flame-like top, leaf at the lower left, even gap), redrawn as a vector from your reference images. The second, solid option was preferred over the purple gradient, because a flat mark stays sharp at small sizes and works as an Android 13+ themed icon.
+- **Colours: not decided yet.**
+- **Draft files** (outside git): `D:/Justice-Chain/icon_drafts/`, with `sakshya-icon-preview.png` and `.svg`, `make_icon.js` (regenerates the mark in any colours) and `mark_paths.json`.
+- **Note:** the reference mock-ups said "Sakshyam"; the app's name is **Sakshya**.
+- **When the final icon arrives:** adaptive icon (foreground, background, monochrome), round icon, and legacy PNG sizes, then check on the emulator. About 30 minutes.
+
 ### Step 6b. Background listening (foreground service). Do after the AI false-trigger fix; plan first, then code
 **Found 14-10-2026 during AI experiment 2 on the Vivo:** when the phone is locked or the app isn't on screen, Android stops giving the app the microphone, so **automatic detection only works while Sakshya is open**. The SOS button and "112 =" are unaffected (they need the app open anyway).
 - **What:**
