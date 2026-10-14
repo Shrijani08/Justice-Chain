@@ -2,7 +2,15 @@
 
 **Why:** in experiments 1–4 our own model false-triggered about 100 times per hour of ordinary talking, and caught only 17–38% of acted screams. Changing how the sound is prepared didn't fix it. On the same phone clips, Google's pretrained YAMNet flagged none of the 70 false triggers, made no false triggers on plain speech, and fired within seconds of the first scream. Details: `DOCS/08-10-2026 AI false trigger analysis.md`.
 
-**Status:** plan only. Nothing is built until you say go.
+**Status (14-10-2026):** approved. The old model stays in capture mode only, and the targets are as below.
+- **Steps 1, 2 and 4–7 built:** commit `323ebc62`; 164 tests pass.
+- **Step 3 done on the Vivo:**
+  - YAMNet loads with `tflite_flutter` as it is;
+  - each 2 s window (3 frames) takes **91 ms median, 115 ms p95, 136 ms max** over 129 windows (target < 300 ms);
+  - phone-vs-laptop parity on 16 saved windows: largest difference 0.004, same pass/fail 100%;
+  - in about 2 minutes of talking, YAMNet passed **0** windows (top class "Speech" 101 times), while the old model, logged alongside, passed 16;
+  - **the single short test scream scored only 0.15 (heard as "Animal"), below 0.2.** One scream is not an episode, and per this plan the threshold is tuned only once, in step 9, on the validation data. Watch this in step 8: if 10 s episodes are also missed on the Vivo, step 9 lowers the threshold.
+- **Next:** step 8, the validation session.
 
 ## 1. What changes for the user
 
