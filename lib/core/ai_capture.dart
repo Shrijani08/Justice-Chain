@@ -13,10 +13,14 @@ import 'package:path_provider/path_provider.dart';
 /// a 16 kHz WAV, exactly as the model saw it. While capturing, a confirmed
 /// trigger is only logged ("WOULD TRIGGER"), so recordings don't pause the
 /// listening. Files: app_flutter/ai_capture on the device.
+///
+/// With --dart-define=AI_CAPTURE_ALL=true as well, every window is saved,
+/// not only the ones over the threshold (experiment 2's test set).
 class AiCapture {
   AiCapture._();
 
   static const bool enabled = kDebugMode && bool.fromEnvironment('AI_CAPTURE');
+  static const bool saveAll = enabled && bool.fromEnvironment('AI_CAPTURE_ALL');
 
   static Directory? _dir;
   static int _windowCount = 0;
@@ -46,9 +50,10 @@ class AiCapture {
       final now = DateTime.now();
       final n = ++_windowCount;
       String? wav;
-      if (passed) {
+      if (passed || saveAll) {
         final stamp = now.toIso8601String().replaceAll(':', '-').split('.').first;
-        wav = '${stamp}_w${n}_d${(probabilities[0] * 100).round()}.wav';
+        final score = probabilities.isEmpty ? 'silence' : 'd${(probabilities[0] * 100).round()}';
+        wav = '${stamp}_w${n}_$score.wav';
         await File('${dir.path}/$wav').writeAsBytes(_wav(samples));
       }
       final p = probabilities.isEmpty ? ['', '', ''] : probabilities.map((v) => v.toStringAsFixed(4)).toList();

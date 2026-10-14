@@ -71,6 +71,28 @@ Risks:
 - Ordinary voices make it fire about **100 times an hour**, often at 95–100% confidence. One steady speaker and TV/media are the worst cases.
 - This confirms the 07-10 device test with numbers. It doesn't yet say *why* (Suspect A or B); experiment 4 does, using these 70 WAVs as the "false triggers" set.
 
+## Experiment 2 results (14-10-2026, Vivo): the phone test set
+
+**Setup:**
+- Same capture build plus `--dart-define=AI_CAPTURE_ALL=true`, so every 2 s window was saved, as the app sees it.
+- Parts:
+  - S: plain speech, 20:41:28–20:44:11;
+  - D: acted screams and shouted calls for help, in short bursts with pauses, 20:44:11–20:47:14;
+  - H: laughter, 20:47:14–20:48:28.
+- Only the bursts count for D and H: windows with RMS ≥ 0.05. The quiet pauses between bursts are left out.
+- Data (outside git): `D:\Justice-Chain\ai_experiments\2026-10-14_exp2_vivo\`, with `test_set/{speech,distress,happy,false_triggers}` and `manifest.csv` listing each file, its expected class and the app's scores. The false triggers come from experiment 1.
+
+| Set | Windows | Should be | App said | App right |
+|---|---|---|---|---|
+| speech | 154 | normal | normal 114, **distress 39**, happy 1 | 74% |
+| distress (acted screams and shouts) | 124 | distress | **normal 101**, distress 21, happy 2 | **17%** |
+| happy (laughter) | 52 | happy | normal 44, distress 8 | **0%** |
+| false triggers (experiment 1) | 70 | normal | distress 70 | 0% |
+
+**What it shows:** with the app's current preprocessing, the model is **more likely to call plain speech "distress" (25%) than an actual scream (17%)**, and it never recognises laughter. As the app runs it today, it isn't detecting distress at all. Experiment 4 tests whether the training preprocessing changes that (Suspect A) or not (Suspect B). Screams from the dataset's test split will be added on the computer for that comparison.
+
+**Also found:** when the phone is locked or the app isn't on screen, Android gives the app no microphone. Automatic detection only works with Sakshya open. This is planned as step 6b (foreground service) in `DOCS/14-10-2026 remaining steps.md`.
+
 ## Plan (in order; ask before retraining)
 
 1. **Experiment to tell A from B (a few hours):**
