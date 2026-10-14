@@ -8,6 +8,7 @@ import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../logic/safety_signals.dart';
+import 'ai_capture.dart';
 
 typedef DistressDetectedCallback = Future<void> Function(AIDistressEvent event);
 
@@ -288,6 +289,16 @@ class AIService {
         aiPrediction.value = 'silence';
         aiConfidence.value = 0.0;
         _recordWindowPass(false);
+        if (AiCapture.enabled) {
+          await AiCapture.window(
+            samples: samples,
+            rms: rms,
+            label: 'silence',
+            probabilities: const [],
+            passed: false,
+            wouldTrigger: false,
+          );
+        }
         return;
       }
 
@@ -307,6 +318,20 @@ class AIService {
           prediction.label.toLowerCase() == 'distress' &&
           prediction.confidence >= distressThreshold;
       final confirmedByHistory = _recordWindowPass(windowPassed);
+
+      if (AiCapture.enabled) {
+        // Experiment mode: log and keep listening instead of recording.
+        await AiCapture.window(
+          samples: samples,
+          rms: rms,
+          label: prediction.label,
+          probabilities: prediction.probabilities,
+          passed: windowPassed,
+          wouldTrigger: confirmedByHistory,
+        );
+        if (confirmedByHistory) _recentWindowPasses.clear();
+        return;
+      }
 
       if (confirmedByHistory) {
         developer.log(

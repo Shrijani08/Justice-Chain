@@ -50,6 +50,27 @@ Risks:
 - `live_detection.py` and `README.md` describe a **different model**: a 2D mel-spectrogram CNN (`justice_chain_model.h5`, 128×128 input) with its own preprocessing. The app ships the 1D CNN. Align the docs so the presentation doesn't mix them up.
 - `DOCS/AI_DISTRESS_INTEGRATION_REPORT.md` still describes live inference as a placeholder; it is out of date.
 
+## Experiment 1 results (14-10-2026, Vivo V2239, Android 15)
+
+**Setup:**
+- Debug build with `--dart-define=AI_CAPTURE=true` (`lib/core/ai_capture.dart`). Every 2 s window's scores went to `windows.csv`, and every window scoring ≥ 80% distress was saved as a 16 kHz WAV, exactly as the model saw it.
+- In capture mode a confirmed trigger is only logged ("would trigger"), so listening never paused.
+- The app's real rule applied: threshold 0.80, 2 of the last 3 windows, autoGain on.
+- Data (not in git; contains the testers' voices): `D:\Justice-Chain\ai_experiments\2026-10-14_exp1_vivo\`. It holds `raw/` (CSV + WAVs), `false_triggers/<part>/` and `summary.json`.
+
+| Part | What | Minutes | Windows labelled distress | Windows ≥ 80% | Would have recorded | Per hour |
+|---|---|---|---|---|---|---|
+| Silence | quiet room | 2.9 | 0 | 0 | 0 | 0 |
+| A | one person reading or talking | 3.0 | 38 | 24 | 8 | ~157 |
+| B | conversation, 2+ people | 4.2 | 13 | 7 | 2 | ~29 |
+| C | TV, video or music | 5.7 | 58 | 39 | 12 | ~127 |
+| **All talking** | | **12.9** | 109 | 70 | **22** | **~102** |
+
+**What it shows:**
+- The model is sensible on silence: highest distress score 29%.
+- Ordinary voices make it fire about **100 times an hour**, often at 95–100% confidence. One steady speaker and TV/media are the worst cases.
+- This confirms the 07-10 device test with numbers. It doesn't yet say *why* (Suspect A or B); experiment 4 does, using these 70 WAVs as the "false triggers" set.
+
 ## Plan (in order; ask before retraining)
 
 1. **Experiment to tell A from B (a few hours):**
