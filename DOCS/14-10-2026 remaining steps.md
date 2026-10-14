@@ -192,13 +192,24 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
 - **What:**
   - **A foreground service:** a small Kotlin service declared as type `microphone` (and `camera`), with the matching permissions in `AndroidManifest.xml` (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS`) and a notification channel. Android lets such a service keep running in the background as long as it shows a **permanent notification** (e.g. "Sakshya is protecting you").
   - **Start and stop:** the service is started when monitoring starts, which happens while the app is on screen. Android requires that: a microphone service can't be started from the background. It stops when the user turns protection off. Our existing Dart AI code then keeps listening with the screen off.
-  - **Recording while locked:** the hard part. Starting a *video* recording from the background is restricted, and the Flutter camera plugin expects the app on screen. A realistic first version records **audio** when the phone is locked and video when the app is open. Check both phones (Vivo and Samsung behave differently).
-  - **If the app is swiped away:** the Flutter engine stops with it. Keeping listening after that needs a separate background engine. Decide whether that's in scope or future work.
+  - **Recording while locked: video, recorded by the service itself (decided 15-10-2026).** The service is declared as type `camera|microphone` and started while the app is on screen. It then keeps camera and microphone access in the background and when the phone is locked: Android documents the camera type as "continue to access the camera from the background". On a trigger the service records video itself with CameraX, in Kotlin, with **no window, no preview and no screen wake**. Then it hands the file to the existing seal-and-upload path.
+    - The Flutter camera plugin can't do this: it needs the app on screen. So the background recording is a small native recorder; the on-screen SOS keeps using the plugin.
+    - **Audio-only fallback:** if the camera can't be opened (another app is using it, the camera privacy switch is off, or an OEM blocks it), record audio, so there is still evidence.
+    - **Rejected: popping the app open in a small or picture-in-picture window on a trigger.**
+      - Android blocks apps from opening screens from the background, unless the user grants "Display over other apps", which on Android 15 also needs a visible overlay.
+      - Picture-in-picture can only start from a screen already open.
+      - Over the lock screen it would have to turn the screen on, which is the opposite of discreet.
+      - The service approach records video without any of this.
+    - **What stays visible:** the permanent notification, and Android 12+'s green camera and microphone dots while recording. Neither can be hidden.
+    - **Vivo and Samsung battery managers** may still kill background services. The app must guide the user to allow it: Vivo "Allow background activity / high background power use"; Samsung "Never sleeping apps". Check on both phones in step 9.
   - **Disguise mode:** the permanent notification would give the app away. In disguise mode it needs neutral wording and icon (e.g. "Calculator" or "Running"). **A design decision for you.**
+  - **Decided 15-10-2026 (microphone dot): a user switch, "Keep listening while disguised", on by default.** Android 12+ shows a green dot whenever the microphone is in use, and apps can't hide it. With the switch on, automatic detection keeps working under the calculator (and the dot shows). With it off, listening stops while disguised: no dot, and only "112 =" or the SOS button records. The same switch also controls the background service's notification. The switch's screen comes with the redesign (step 7).
+  - **If the app is swiped away from recent apps:** today the AI stops, because the Flutter engine belongs to the screen. Keep the engine alive in the service (a cached `FlutterEngine` owned by the service), so listening, recording and upload go on until the user turns protection off.
   - **Battery:** continuous listening drains battery. Measure the drain per hour on both phones and report it.
 - **Why after the AI fix:** today the model false-triggers about 100 times an hour of ordinary talking (experiment 1). Listening all day in the background would mean dozens of unwanted recordings and uploads per day.
 - **Done when:**
-  - with the phone locked, a test distress sound is detected and a recording is saved and uploaded;
+  - with the phone locked, a test distress sound is detected, and a **video** recording (audio-only if the camera is unavailable) is saved and uploaded;
+  - the same works after the app has been swiped away from recent apps;
   - the notification shows the right wording in normal and disguise mode;
   - battery drain per hour is measured on both phones;
   - unit tests are green. The real-phone checks are part of step 9.
