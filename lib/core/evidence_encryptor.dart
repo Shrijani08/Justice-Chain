@@ -82,7 +82,10 @@ class EvidenceEncryptor {
     final plaintextHash = crypto.sha256.convert(plaintextBytes).toString();
 
     final cipherAlgorithm = AesGcm.with256bits();
-    final incidentKey = await cipherAlgorithm.newSecretKey();
+    // From the recovery code when the phone has one, so a restored phone can
+    // rebuild it; random on phones set up before recovery codes.
+    final incidentKey =
+        await IdentityService.clipKeyFor(plaintextHash) ?? await cipherAlgorithm.newSecretKey();
 
     final secretBox = await cipherAlgorithm.encrypt(
       plaintextBytes,
@@ -318,6 +321,20 @@ class EvidenceEncryptor {
       cipherPath,
       recoverIncidentKey(shares, threshold: threshold),
     );
+  }
+
+  /// Opens one of this identity's clips from its ciphertext alone, with
+  /// the key the recovery code gives (a restored phone has no wrapped key).
+  /// Throws if the phone has no recovery code, the key doesn't fit, or the
+  /// clip doesn't match [plaintextHashHex].
+  static Future<Uint8List> decryptWithRecoveredKey(List<int> cipherBytes, String plaintextHashHex) async {
+    final key = await IdentityService.clipKeyFor(plaintextHashHex);
+    if (key == null) throw StateError('This phone has no recovery code');
+    final plaintext = await AesGcm.with256bits().decrypt(_unpackSecretBox(cipherBytes), secretKey: key);
+    if (crypto.sha256.convert(plaintext).toString() != plaintextHashHex.toLowerCase()) {
+      throw StateError('The clip does not match its ledger record');
+    }
+    return Uint8List.fromList(plaintext);
   }
 
   static Future<Uint8List> _decryptFileWithKey(

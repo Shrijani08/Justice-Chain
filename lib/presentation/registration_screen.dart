@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../core/identity_service.dart';
 // Note: We updated this import to match the actual functional UI screen.
 import 'home_screen.dart';
+import 'recovery_code_screen.dart';
+import 'restore_screen.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -45,10 +47,17 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             ),
           );
 
-          // Route to the actual application dashboard
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const MainSafetyScreen()),
+          // Show the recovery code once, then the application dashboard.
+          // The navigator outlives this screen, which is replaced first.
+          final navigator = Navigator.of(context);
+          navigator.pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => RecoveryCodeScreen(
+                onDone: () => navigator.pushReplacement(
+                  MaterialPageRoute(builder: (context) => const MainSafetyScreen()),
+                ),
+              ),
+            ),
           );
         }
       } catch (e) {
@@ -215,6 +224,16 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               letterSpacing: 1.5,
                             ),
                           ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: _isProcessing
+                        ? null
+                        : () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const RestoreScreen()),
+                            ),
+                    child: const Text('Lost your phone? Restore with recovery code'),
                   ),
                 ],
               ),

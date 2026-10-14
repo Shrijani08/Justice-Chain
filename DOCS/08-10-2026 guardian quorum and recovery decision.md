@@ -1,6 +1,6 @@
 # Guardian Quorum and Evidence Recovery: Decision Needed (08-10-2026)
 
-**Status:** option 2 is built (untested on a device, not committed). **Option 1 needs a team decision** before it's built. The decisions are in section 5.
+**Status:** option 2 is built and committed (`963e441d`). **Option 1 was approved and built on 14-10-2026**: base32 code, on the Fabric ledger, details in `DOCS/14-10-2026 remaining steps.md` step 6. Device test pending (step 9).
 
 ## 1. The problem
 

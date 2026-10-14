@@ -65,6 +65,7 @@ class GuardianManager {
         await EvidenceVaultService.issueMissingGuardianShares();
       }
       await EvidenceVaultService.resumePendingWork();
+      await AuthorityService.resumeGuardianSync();
       await AuthorityService.requestGuardianSync();
       unawaited(OutboxService.process());
     } catch (e) {

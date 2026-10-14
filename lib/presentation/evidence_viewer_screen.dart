@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../core/evidence_encryptor.dart';
+import '../core/recovery_service.dart';
 import 'evidence_player_screen.dart';
 
 /// Lists this device's own encrypted evidence records and lets the user
@@ -45,16 +46,23 @@ class EvidenceViewerScreen extends StatelessWidget {
                 final wrappedKey = data['wrappedKey'] as String?;
                 final status = data['status'] as String? ?? 'unknown';
                 final timestamp = data['timestamp'] as String? ?? '';
-                final canPlay = cipherPath != null && wrappedKey != null;
+                // Restored from the ledger after a recovery: no local file;
+                // fetched from IPFS and opened with the recovery code's key.
+                final restored = status == RecoveryService.restoredStatus;
+                final canPlay = restored || (cipherPath != null && wrappedKey != null);
 
                 return ListTile(
                   leading: Icon(
-                    status == 'uploaded_to_ipfs'
-                        ? Icons.cloud_done
-                        : Icons.lock,
-                    color: status == 'uploaded_to_ipfs'
-                        ? Colors.green
-                        : Colors.orange,
+                    restored
+                        ? Icons.restore
+                        : status == 'uploaded_to_ipfs'
+                            ? Icons.cloud_done
+                            : Icons.lock,
+                    color: restored
+                        ? Colors.lightBlue
+                        : status == 'uploaded_to_ipfs'
+                            ? Colors.green
+                            : Colors.orange,
                   ),
                   title: Text(
                     hash.length > 20 ? '${hash.substring(0, 20)}...' : hash,
@@ -68,10 +76,12 @@ class EvidenceViewerScreen extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                               builder: (context) => EvidencePlayerScreen(
-                                loadPlaintext: () => EvidenceEncryptor.decryptFile(
-                                  cipherPath,
-                                  wrappedKey,
-                                ),
+                                loadPlaintext: () => restored
+                                    ? RecoveryService.openRestoredClip(hash)
+                                    : EvidenceEncryptor.decryptFile(
+                                        cipherPath!,
+                                        wrappedKey!,
+                                      ),
                                 label: hash.length > 12
                                     ? hash.substring(0, 12)
                                     : hash,

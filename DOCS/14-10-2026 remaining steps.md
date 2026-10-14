@@ -157,6 +157,24 @@ Separate tracks, not part of this list: the Raspberry Pi SOS device (its own 15-
 ### Step 6. Decide the open questions (decisions from you, no coding)
 These were left open in earlier docs. Each needs a yes or no before the demo:
 1. **Recovery code (Option 1):** build it, or present it as future work? Without it, a victim with no guardians who loses her phone can't recover her clips.
+   - **Decided 14-10-2026: build it. Built the same day.**
+   - **Code:**
+     - `lib/core/recovery_code.dart`: 128 random bits shown as six groups of five (Crockford base32) with a 22-bit checksum, so any one-character typo is refused. Each key comes from its own HKDF label: Ed25519, X25519, secp256k1, and an "evidence root". Each clip's key is HKDF(evidence root, the clip's SHA-256), which the ledger records.
+     - `IdentityService`: a new phone's keys come from the secret. The code is kept only until confirmed. `restoreFromRecoveryCode` rebuilds the same node ID and keys. `clipKeyFor` gives the clip key.
+     - `EvidenceEncryptor`: uses that key for new clips; `decryptWithRecoveredKey` opens a clip from its ciphertext alone and checks the hash.
+     - `lib/core/recovery_service.dart`: restore lists the identity's clips from the ledger (`/history`, which includes clips a guardian anchored on the victim's behalf). Each comes back as a "restored" record that My Evidence fetches from IPFS and plays.
+     - After a restore, guardian sync is paused until a guardian is paired again, so the empty new phone doesn't wipe the guardian list on the ledger.
+     - Screens (plain, restyled in step 7): "Your recovery code" after registration (type the last group to confirm), "Lost your phone? Restore with recovery code" on the registration screen, and restored clips in My Evidence.
+   - **Checks:**
+     - 15 new tests (`test/recovery_test.dart`): code format and typo detection, the same identity on a second phone, mistyped and wrong codes, phones from before recovery codes keep random keys, restore and open from IPFS, a changed IPFS file refused, an unreachable ledger reported, guardian-sync pause, the code screen;
+     - live run `test/recovery_live_test.dart` against Fabric: a phone with no guardians anchored two clips; a new phone with only the code got the same node ID back, found both on the ledger and opened both from the IPFS stand-in, byte for byte;
+     - full suite: 157 pass.
+   - **Terms (decision doc section 4), and how they apply now:**
+     - phones must be set up fresh: they will be anyway in step 9 (new app ID);
+     - only clips recorded after this change are recoverable;
+     - the ledger keeps its records (Fabric volumes, never `network.sh down`);
+     - anyone with the code can open the clips, so keep it like a seed phrase;
+     - the restored phone starts with no guardians; pair them again.
 2. **Cloud deployment:** keep the network and gateway on the laptop for the demo (both phones on the same Wi-Fi), or move them to a cloud server so the demo doesn't depend on the laptop? If cloud, step 8 is added and needs your cloud account.
 3. **AI false triggers:** keep as a known limitation for the presentation, or run the one-afternoon experiment from `DOCS/08-10-2026 AI false trigger analysis.md` (step 1 there) first?
 

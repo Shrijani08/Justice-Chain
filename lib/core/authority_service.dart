@@ -135,6 +135,16 @@ class AuthorityService {
     developer.log('Phone $nodeId registered on the ledger.', name: 'JusticeChain.Authority');
   }
 
+  static const _guardianSyncPausedKey = 'guardian_sync_paused';
+
+  /// After a restore the phone has no guardians yet: leave the ledger's
+  /// list alone (so guardians can still release pieces) until the user
+  /// pairs a guardian again.
+  static Future<void> pauseGuardianSyncUntilNewGuardian() => _box.put(_guardianSyncPausedKey, true);
+
+  /// Called when a guardian is added: the phone's list is the real one again.
+  static Future<void> resumeGuardianSync() => _box.delete(_guardianSyncPausedKey);
+
   /// Makes the ledger's guardian list match this phone's trusted guardians.
   /// The ledger only accepts registered phones, so a guardian who hasn't
   /// opened Sakshya yet is left out and the sync throws, which makes the
@@ -142,6 +152,7 @@ class AuthorityService {
   static Future<void> syncGuardians() async {
     final ledger = _requireLedger();
     await registerThisPhone();
+    if (_box.get(_guardianSyncPausedKey) == true) return;
     final me = await IdentityService.getMyNodeId();
 
     final wanted = GuardianManager.getTrustedGuardians().keys.cast<String>().toList()..sort();

@@ -7,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:web3dart/web3dart.dart';
 import 'dart:developer' as developer;
 
+import 'recovery_code.dart';
+
 class IdentityService {
   IdentityService._();
 
@@ -50,49 +52,25 @@ class IdentityService {
   }
 
   /// Initializes the device identity.
-  /// Generates an Ed25519 keypair (signing) and an X25519 keypair
-  /// (encryption) if they do not already exist. The two checks are
-  /// independent so a device registered before the X25519 key existed
-  /// still gets one generated here on its next launch, without touching
-  /// its existing Ed25519 identity or node ID.
+  /// A new phone gets all its keys (Ed25519 signing, X25519 encryption,
+  /// secp256k1 anchoring, and the evidence root that clip keys come from)
+  /// from one random recovery secret, whose code is shown once at
+  /// registration. Phones set up before recovery codes keep their random
+  /// keys; the X25519 and anchoring checks below still fill in keys that
+  /// such a phone was created without.
   static Future<void> initializeDevice() async {
     try {
       final hasIdentityKey = await _storage.containsKey(key: 'private_key');
 
       if (!hasIdentityKey) {
         developer.log(
-          'Generating new hardware-backed Ed25519 identity...',
+          'Generating new identity from a recovery secret...',
           name: 'JusticeChain.Identity',
         );
-
-        // 1. Generate a new Ed25519 Keypair
-        final algorithm = Ed25519();
-        final keyPair = await algorithm.newKeyPair();
-
-        // 2. Extract raw bytes safely
-        final privateBytes = await keyPair.extractPrivateKeyBytes();
-        final publicBytes = (await keyPair.extractPublicKey()).bytes;
-
-        // 3. Lock Private Key in Hardware Keystore
-        await _storage.write(
-          key: 'private_key',
-          value: base64Encode(privateBytes),
-        );
-
-        // 4. Create Node ID (SHA-256 Hash of Public Key for a shorter 16-char string)
-        final nodeId = sha256.convert(publicBytes).toString().substring(0, 16);
-        await _storage.write(key: 'public_node_id', value: nodeId);
-
-        // 5. Store the raw public key to share with Guardians
-        await _storage.write(
-          key: 'raw_public_key',
-          value: base64Encode(publicBytes),
-        );
-
-        developer.log(
-          'Identity generated successfully. Node ID: $nodeId',
-          name: 'JusticeChain.Identity',
-        );
+        final secret = RecoveryCode.newSecret();
+        await _installIdentity(secret);
+        // Kept only until the user confirms they wrote the code down.
+        await _storage.write(key: _pendingCodeKey, value: RecoveryCode.format(secret));
       } else {
         developer.log(
           'Existing hardware identity found.',
@@ -156,6 +134,68 @@ class IdentityService {
       );
       rethrow;
     }
+  }
+
+  static const _pendingCodeKey = 'recovery_code_pending';
+  static const _evidenceRootKey = 'evidence_root';
+
+  /// Writes every key derived from [secret] to secure storage, replacing
+  /// any identity already there.
+  static Future<void> _installIdentity(List<int> secret) async {
+    final keys = await RecoveryCode.deriveKeys(secret);
+
+    final edKeyPair = await Ed25519().newKeyPairFromSeed(keys.ed25519Seed);
+    final edPublic = (await edKeyPair.extractPublicKey()).bytes;
+    // Node ID: the first 16 hex characters of SHA-256 of the public key.
+    final nodeId = sha256.convert(edPublic).toString().substring(0, 16);
+
+    final xKeyPair = await X25519().newKeyPairFromSeed(keys.x25519Seed);
+    final xPublic = (await xKeyPair.extractPublicKey()).bytes;
+
+    await _storage.write(key: 'private_key', value: base64Encode(keys.ed25519Seed));
+    await _storage.write(key: 'public_node_id', value: nodeId);
+    await _storage.write(key: 'raw_public_key', value: base64Encode(edPublic));
+    await _storage.write(key: 'x25519_private_key', value: base64Encode(keys.x25519Seed));
+    await _storage.write(key: 'raw_x25519_public_key', value: base64Encode(xPublic));
+    await _storage.write(
+      key: 'anchoring_private_key',
+      value: '0x${keys.anchoringKey.toRadixString(16).padLeft(64, '0')}',
+    );
+    await _storage.write(key: _evidenceRootKey, value: base64Encode(keys.evidenceRoot));
+    _cachedNodeId = null;
+    developer.log('Identity installed. Node ID: $nodeId', name: 'JusticeChain.Identity');
+  }
+
+  /// The recovery code, until the user confirms they saved it; null after
+  /// that, and on phones set up before recovery codes existed.
+  static Future<String?> pendingRecoveryCode() => _storage.read(key: _pendingCodeKey);
+
+  /// Forgets the recovery code. From now on only the user has it.
+  static Future<void> confirmRecoveryCodeSaved() => _storage.delete(key: _pendingCodeKey);
+
+  /// Whether this phone's clips can be reopened from a recovery code.
+  static Future<bool> hasRecoveryCode() => _storage.containsKey(key: _evidenceRootKey);
+
+  /// Turns this phone into the one the code belongs to: same node ID and
+  /// keys, so its clips on the ledger are its own again. Throws
+  /// [FormatException] for a mistyped code. Then registers [name] and [pin].
+  static Future<void> restoreFromRecoveryCode({
+    required String code,
+    required String name,
+    required String pin,
+  }) async {
+    final secret = RecoveryCode.parse(code);
+    await _installIdentity(secret);
+    await confirmRecoveryCodeSaved(); // the user already has it
+    await registerNode(name: name, pin: pin);
+  }
+
+  /// The AES key for the clip whose content hash is [plaintextHashHex], or
+  /// null on a phone without a recovery code (its clips use random keys).
+  static Future<SecretKey?> clipKeyFor(String plaintextHashHex) async {
+    final root = await _storage.read(key: _evidenceRootKey);
+    if (root == null) return null;
+    return RecoveryCode.clipKey(base64Decode(root), plaintextHashHex);
   }
 
   /// Registers the user's name and PIN, and ensures keys are initialized.
