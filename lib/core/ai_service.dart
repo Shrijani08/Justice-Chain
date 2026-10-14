@@ -9,6 +9,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../logic/safety_signals.dart';
 import 'ai_capture.dart';
+import 'yamnet_detector.dart';
 
 typedef DistressDetectedCallback = Future<void> Function(AIDistressEvent event);
 
@@ -47,7 +48,11 @@ class AIService {
 
   static const String _modelAssetPath = 'assets/models/distress_model.tflite';
   static const List<String> _classes = ['distress', 'happy', 'normal'];
-  static const double distressThreshold = 0.80;
+
+  /// The old model's threshold. Since 14-10-2026 YAMNet decides
+  /// ([YamnetDetector.threshold]); the old model runs only in capture mode,
+  /// for comparison.
+  static const double legacyDistressThreshold = 0.80;
 
   // A single noisy window (a shout, a loud TV, a slammed door) must not be
   // enough to fire a recording and an upload on its own. Requiring 2 of the
@@ -71,7 +76,8 @@ class AIService {
   final ListQueue<double> _rollingSamples = ListQueue<double>();
   final ListQueue<bool> _recentWindowPasses = ListQueue<bool>();
 
-  Interpreter? _interpreter;
+  final YamnetDetector _yamnet = YamnetDetector();
+  Interpreter? _interpreter; // the old distress model, capture mode only
   StreamSubscription<Uint8List>? _audioSubscription;
   DistressDetectedCallback? _onDistressDetected;
 
@@ -92,19 +98,20 @@ class AIService {
     if (_isModelLoaded || _isInitializing) return;
 
     _isInitializing = true;
-    aiStatus.value = 'Loading AI 1D distress model...';
+    aiStatus.value = 'Loading AI sound model...';
 
     try {
-      final options = InterpreterOptions()..threads = 2;
+      await _yamnet.load();
 
-      _interpreter = await Interpreter.fromAsset(
-        _modelAssetPath,
-        options: options,
-      );
-
-      _interpreter!.resizeInputTensor(0, const [1, 32000, 1]);
-      _interpreter!.allocateTensors();
-      _runModelSelfTest();
+      if (AiCapture.enabled) {
+        _interpreter = await Interpreter.fromAsset(
+          _modelAssetPath,
+          options: InterpreterOptions()..threads = 2,
+        );
+        _interpreter!.resizeInputTensor(0, const [1, 32000, 1]);
+        _interpreter!.allocateTensors();
+        _runModelSelfTest();
+      }
 
       _isModelLoaded = true;
       aiModelReady.value = true;
@@ -113,7 +120,7 @@ class AIService {
       aiPrediction.value = 'none';
       _lastModelError = null;
 
-      developer.log('1D CNN TFLite model loaded', name: 'JusticeChain.AI');
+      developer.log('YAMNet loaded', name: 'JusticeChain.AI');
     } catch (error, stackTrace) {
       _isModelLoaded = false;
       aiModelReady.value = false;
@@ -122,7 +129,7 @@ class AIService {
       aiStatus.value = 'AI model load failed: $_lastModelError';
 
       developer.log(
-        'Failed to initialize 1D TFLite interpreter: $error',
+        'Failed to load the AI sound model: $error',
         name: 'JusticeChain.AI',
         error: error,
         stackTrace: stackTrace,
@@ -142,7 +149,7 @@ class AIService {
     if (_isMonitoring || _isPausedForRecording) return;
 
     await initModel();
-    if (!_isModelLoaded || _interpreter == null) {
+    if (!_isModelLoaded) {
       aiStatus.value = _lastModelError == null
           ? 'AI monitoring paused: model unavailable'
           : 'AI monitoring paused: $_lastModelError';
@@ -275,10 +282,9 @@ class AIService {
   }
 
   Future<void> _runRealtimeInference(List<double> samples) async {
-    if (!_isModelLoaded || _interpreter == null || isRecording.value) return;
+    if (!_isModelLoaded || isRecording.value) return;
 
     _isPreprocessing = true;
-    aiStatus.value = 'AI executing 1D CNN prediction';
 
     try {
       double sumSquares = samples.fold(0.0, (sum, val) => sum + (val * val));
@@ -293,8 +299,7 @@ class AIService {
           await AiCapture.window(
             samples: samples,
             rms: rms,
-            label: 'silence',
-            probabilities: const [],
+            yamnetTop: 'silence',
             passed: false,
             wouldTrigger: false,
           );
@@ -302,31 +307,36 @@ class AIService {
         return;
       }
 
-      final prediction = evaluateDistressSignals(samples);
-      aiPrediction.value = prediction.label;
-      aiConfidence.value = prediction.confidence;
+      final stopwatch = Stopwatch()..start();
+      final heard = _yamnet.scoreWindow(samples);
+      final inferMs = stopwatch.elapsedMilliseconds;
+      aiPrediction.value = heard.topClass;
+      aiConfidence.value = heard.distress;
 
-      final percent = (prediction.confidence * 100).toStringAsFixed(0);
-      aiStatus.value = 'AI prediction: ${prediction.label} ($percent%)';
+      final percent = (heard.distress * 100).toStringAsFixed(0);
+      aiStatus.value = 'AI hears: ${heard.topClass} · distress $percent%';
 
       final inCooldown = _autoTriggerBlockedUntil != null &&
           DateTime.now().isBefore(_autoTriggerBlockedUntil!);
       if (inCooldown) {
-        aiStatus.value = 'AI prediction: ${prediction.label} ($percent%) · cooling down';
+        aiStatus.value = 'AI hears: ${heard.topClass} · distress $percent% · cooling down';
       }
-      final windowPassed = !inCooldown &&
-          prediction.label.toLowerCase() == 'distress' &&
-          prediction.confidence >= distressThreshold;
+      final windowPassed = !inCooldown && heard.distress >= YamnetDetector.threshold;
       final confirmedByHistory = _recordWindowPass(windowPassed);
 
       if (AiCapture.enabled) {
-        // Experiment mode: log and keep listening instead of recording.
+        // Experiment mode: log both models and keep listening instead of recording.
+        final legacy = evaluateDistressSignals(samples);
         await AiCapture.window(
           samples: samples,
           rms: rms,
-          label: prediction.label,
-          probabilities: prediction.probabilities,
+          yamnetTop: heard.topClass,
+          yamnetDistress: heard.distress,
+          inferMs: inferMs,
+          legacyLabel: legacy.label,
+          legacyProbabilities: legacy.probabilities,
           passed: windowPassed,
+          legacyPassed: legacy.label == 'distress' && legacy.confidence >= legacyDistressThreshold,
           wouldTrigger: confirmedByHistory,
         );
         if (confirmedByHistory) _recentWindowPasses.clear();
@@ -344,8 +354,8 @@ class AIService {
 
         await _notifyDistressDetected(
           AIDistressEvent(
-            confidence: prediction.distressConfidence,
-            label: prediction.label,
+            confidence: heard.distress,
+            label: 'distress',
             isSimulated: false,
           ),
         );
@@ -491,6 +501,7 @@ class AIService {
   Future<void> dispose() async {
     await stopMonitoring();
     await _audioRecorder.dispose();
+    _yamnet.close();
     _interpreter?.close();
     _interpreter = null;
     _isModelLoaded = false;

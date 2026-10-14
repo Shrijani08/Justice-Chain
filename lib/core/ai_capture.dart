@@ -3,14 +3,15 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Experiment 1 of DOCS/08-10-2026 AI false trigger analysis.md: a record
-/// of what the distress model hears and how it scores it, to tell a
-/// preprocessing mismatch from bad training data.
+/// A record of what the automatic trigger hears and how it scores it, for
+/// the experiments in DOCS/08-10-2026 AI false trigger analysis.md and the
+/// YAMNet validation session (DOCS/14-10-2026 switch to YAMNet plan.md).
 ///
 /// Only in debug builds started with --dart-define=AI_CAPTURE=true. Every
 /// 2 s window's scores go to `ai_capture/windows.csv` (and the log, as
-/// `AI_CAPTURE …`); each window scoring at least the threshold is saved as
-/// a 16 kHz WAV, exactly as the model saw it. While capturing, a confirmed
+/// `AI_CAPTURE …`): YAMNet's, which decide, and the old distress model's,
+/// which runs only in this mode, for side-by-side comparison. A window
+/// either model passes is saved as a 16 kHz WAV, exactly as heard. While capturing, a confirmed
 /// trigger is only logged ("WOULD TRIGGER"), so recordings don't pause the
 /// listening. Files: app_flutter/ai_capture on the device.
 ///
@@ -31,18 +32,24 @@ class AiCapture {
     await dir.create(recursive: true);
     final csv = File('${dir.path}/windows.csv');
     if (!await csv.exists()) {
-      await csv.writeAsString('time,window,rms,label,p_distress,p_happy,p_normal,passed,would_trigger,wav\n');
+      await csv.writeAsString('time,window,rms,yamnet_top,yamnet_distress,infer_ms,'
+          'legacy_label,p_distress,p_happy,p_normal,passed,legacy_passed,would_trigger,wav\n');
     }
     return _dir = dir;
   }
 
-  /// Logs one window. [probabilities] is empty for a window skipped as silence.
+  /// Logs one window. A window skipped as silence has no scores: pass
+  /// [yamnetTop] 'silence' and leave the rest null or empty.
   static Future<void> window({
     required List<double> samples,
     required double rms,
-    required String label,
-    required List<double> probabilities,
+    required String yamnetTop,
+    double? yamnetDistress,
+    int? inferMs,
+    String legacyLabel = '',
+    List<double> legacyProbabilities = const [],
     required bool passed,
+    bool legacyPassed = false,
     required bool wouldTrigger,
   }) async {
     try {
@@ -50,15 +57,22 @@ class AiCapture {
       final now = DateTime.now();
       final n = ++_windowCount;
       String? wav;
-      if (passed || saveAll) {
+      if (passed || legacyPassed || saveAll) {
         final stamp = now.toIso8601String().replaceAll(':', '-').split('.').first;
-        final score = probabilities.isEmpty ? 'silence' : 'd${(probabilities[0] * 100).round()}';
+        final score = yamnetDistress == null
+            ? 'silence'
+            : 'y${(yamnetDistress * 100).round()}_d${legacyProbabilities.isEmpty ? 'x' : (legacyProbabilities[0] * 100).round()}';
         wav = '${stamp}_w${n}_$score.wav';
         await File('${dir.path}/$wav').writeAsBytes(_wav(samples));
       }
-      final p = probabilities.isEmpty ? ['', '', ''] : probabilities.map((v) => v.toStringAsFixed(4)).toList();
-      final line = '${now.toIso8601String()},$n,${rms.toStringAsFixed(4)},$label,${p.join(',')},'
-          '$passed,$wouldTrigger,${wav ?? ''}';
+      final p = legacyProbabilities.isEmpty
+          ? ['', '', '']
+          : legacyProbabilities.map((v) => v.toStringAsFixed(4)).toList();
+      // Class names like "Crying, sobbing" would break the CSV.
+      final top = yamnetTop.replaceAll(',', ';');
+      final line = '${now.toIso8601String()},$n,${rms.toStringAsFixed(4)},$top,'
+          '${yamnetDistress?.toStringAsFixed(4) ?? ''},${inferMs ?? ''},$legacyLabel,${p.join(',')},'
+          '$passed,$legacyPassed,$wouldTrigger,${wav ?? ''}';
       await File('${dir.path}/windows.csv').writeAsString('$line\n', mode: FileMode.append);
       debugPrint('AI_CAPTURE $line${wouldTrigger ? '  <<< WOULD TRIGGER' : ''}');
     } catch (e) {

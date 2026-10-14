@@ -66,4 +66,6 @@ flutter:
   assets:
     - assets/models/distress_model.tflite
     - assets/models/labels.txt
+    - assets/models/yamnet.tflite
+    - assets/models/yamnet_class_map.csv
     - .env

@@ -11,6 +11,11 @@ the 2 s window; the app's "2 of the last 3 windows" rule is applied on top.
       D:/Justice-Chain/ai_experiments/models
 Needs yamnet.tflite (MediaPipe's float32 YAMNet) and yamnet_class_map.csv
 in the models folder. Writes yamnet_results.json and yamnet_results.md.
+
+Parity check for a capture from the YAMNet app build (switch plan, step 6):
+the phone's YAMNet distress scores in windows.csv, recomputed here from the
+saved WAVs, should match.
+  python tools/ai/score_yamnet.py --parity <folder with windows.csv and WAVs> <models folder>
 """
 
 import sysconfig
@@ -132,5 +137,41 @@ def main(exp_dir, models_dir):
         f.write("\n".join(lines) + "\n")
 
 
+def parity(capture_dir, models_dir):
+    with open(os.path.join(models_dir, "yamnet_class_map.csv"), newline="") as f:
+        names = [r["display_name"] for r in csv.DictReader(f)]
+    distress_idx = [names.index(n) for n in DISTRESS]
+    interp = tf.lite.Interpreter(model_path=os.path.join(models_dir, "yamnet.tflite"))
+    interp.allocate_tensors()
+    inp = interp.get_input_details()[0]["index"]
+    out = interp.get_output_details()[0]["index"]
+    with open(os.path.join(capture_dir, "windows.csv"), newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r.get("wav") and r.get("yamnet_distress")]
+    diffs, agree = [], 0
+    for r in rows:
+        x = load_wav(os.path.join(capture_dir, r["wav"]))
+        frames = []
+        for o in OFFSETS:
+            interp.set_tensor(inp, x[o:o + FRAME].astype(np.float32))
+            interp.invoke()
+            frames.append(interp.get_tensor(out)[0])
+        laptop = float(np.max(frames, axis=0)[distress_idx].max())
+        phone = float(r["yamnet_distress"])
+        diffs.append(abs(laptop - phone))
+        agree += (laptop >= 0.2) == (phone >= 0.2)
+    if not rows:
+        print("No windows with both a WAV and a YAMNet score")
+        return
+    print(json.dumps({
+        "windows": len(rows),
+        "max_abs_diff": round(max(diffs), 4),
+        "mean_abs_diff": round(float(np.mean(diffs)), 5),
+        "same_pass_at_0.2_pct": round(100 * agree / len(rows), 1),
+    }))
+
+
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    if sys.argv[1] == "--parity":
+        parity(sys.argv[2], sys.argv[3])
+    else:
+        main(sys.argv[1], sys.argv[2])

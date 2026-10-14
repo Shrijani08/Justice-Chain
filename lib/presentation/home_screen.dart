@@ -10,6 +10,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../core/app_services.dart';
 import '../core/disguise_service.dart';
 import '../core/emergency_controller.dart';
+import '../core/yamnet_detector.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/mesh_service.dart';
 import '../logic/safety_signals.dart';
@@ -370,7 +371,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "Prediction: $currentAiPrediction",
+                      "Hears: $currentAiPrediction",
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
@@ -386,13 +387,13 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                       minHeight: 8,
                       borderRadius: BorderRadius.circular(4),
                       backgroundColor: Colors.grey.shade300,
-                      color: currentAiConfidence >= 0.85
+                      color: currentAiConfidence >= YamnetDetector.threshold
                           ? Colors.red
                           : Colors.green,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "AI confidence: $aiConfidencePercent%",
+                      "Distress score: $aiConfidencePercent%",
                       style: const TextStyle(fontSize: 13),
                     ),
                   ],
