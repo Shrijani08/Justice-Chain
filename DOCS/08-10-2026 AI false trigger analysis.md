@@ -123,6 +123,44 @@ Risks:
 - **The "happy" class doesn't work at all**, even on its own test data (7%). It is too small (162 test clips) and has no class weights.
 - **Conclusion:** a Dart preprocessing fix alone won't make automatic detection reliable. Go to plan step 2 (retraining), after the team agrees. Meanwhile the SOS button and "112 =" are the reliable triggers. For the presentation, automatic detection is a prototype with measured limits.
 
+## YAMNet check (14-10-2026): a pretrained classifier on the same phone clips
+
+**Setup:**
+- **Model:** `tools/ai/score_yamnet.py` runs Google's YAMNet, the AudioSet model with 521 classes, using MediaPipe's float32 `yamnet.tflite` (4.1 MB, Apache 2.0, SHA-256 `4d8b4a53…4faf`) and `yamnet_class_map.csv`. Both are kept in `D:\Justice-Chain\ai_experiments\models\`.
+- **Rule, fixed before looking at results:** a window's distress score is the highest score of Shout, Bellow, Yell, Children shouting, Screaming, Crying/sobbing, Whimper and Wail/moan, over 3 YAMNet frames covering the 2 s window. The app's "2 of the last 3 windows" rule goes on top. The raw phone audio is used as it is: YAMNet needs no special preprocessing.
+
+| Clips (should be) | YAMNet ≥ 0.1 | ≥ 0.2 | ≥ 0.3 | Our model today |
+|---|---|---|---|---|
+| Plain speech (normal), 154 | 3% | 1% | 1% | 16% |
+| Experiment 1's false triggers (normal), 70 | **0%** | **0%** | **0%** | 100% |
+| Acted screams and shouts (distress), 124 | 48% | 23% | 14% | 10% |
+| Laughter (happy), 52 | 17% | 8% | 0% | 6% |
+
+**Replaying the real timelines with the 2-of-3 rule (what the app would do):**
+
+| Part | YAMNet 0.1 | 0.2 | 0.3 | Our model today |
+|---|---|---|---|---|
+| S, plain speech, 2.7 min | 0* | 0* | 0* | 8 |
+| D, screams and shouts, 3 min | 26 (first 3 s after the first scream) | 12 | 6 | 5 |
+| H, laughter, 1.2 min | 3 | 1 | 0 | n/a |
+
+\* YAMNet fired twice at 20:44:05 and 20:44:08, inside part S's time range. The capture shows loudness jumping to scream level (RMS 0.08–0.16 against about 0.02 for talking) from 20:44:04: the screaming started about 7 s before "starting D" was logged. So these were correct detections, not false triggers on speech.
+
+**Reading:**
+- **On speech YAMNet doesn't false-trigger:** no false triggers in this test, and none of experiment 1's 70 false triggers are flagged. It says "Speech" or "Music" for all of them.
+- **During a scream episode it fires** within seconds, and repeatedly. Per 2 s slice it flags only about half (shouted words like "Help!" are mostly heard as Speech), but the app only needs one trigger per episode.
+- **Laughter** gives a few false triggers at 0.1 and none at 0.3.
+- **0.2 looks like a reasonable starting threshold.**
+- **Caveats:**
+  - one phone, one session, a few speakers, acted screams;
+  - thresholds were looked at on the same clips;
+  - 2.7 minutes of speech is too little to estimate a false-trigger rate per hour.
+
+  Validate with a longer recording (about 30 min of talk and TV) and the Samsung before relying on it.
+- **Combining YAMNet with our model as a gate is worse:** our model misses most screams, so the combination catches only 5%.
+
+**Recommendation:** replace our model's automatic trigger with YAMNet (distress classes, about 0.2, 2 of 3). Then validate on both phones, and only then consider retraining our own model (step 2 below) as improvement work.
+
 ## Plan (in order; ask before retraining)
 
 1. **Experiment to tell A from B (a few hours):**
