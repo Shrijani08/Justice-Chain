@@ -176,6 +176,15 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
      - anyone with the code can open the clips, so keep it like a seed phrase;
      - the restored phone starts with no guardians; pair them again.
 2. **Cloud deployment:** keep the network and gateway on the laptop for the demo (both phones on the same Wi-Fi), or move them to a cloud server so the demo doesn't depend on the laptop? If cloud, step 8 is added and needs your cloud account.
+   - **Decided 15-10-2026: laptop + tunnel now (option A), cloud later as an upgrade (option B), with the laptop kept as the fallback.** Details in step 8.
+   - **Options considered:**
+     - Azure for Students: $100 credit, no card, college email, 12 months;
+     - Google Cloud trial: $300, card, 90 days;
+     - Oracle Always Free: no expiry, but ARM and often out of capacity in India;
+     - AWS free tier: 1 GB RAM, too small for Fabric.
+
+     Free app hosts (Render, Railway) can't run Fabric. B and C both outlast the 15 days left before submission.
+   - **Why this order:** the laptop setup already passed every live test. A tunnel makes it reachable over mobile data, so college Wi-Fi blocking phone-to-laptop traffic no longer matters. The cloud is added early (around days 3–7, not the last days) so its problems surface with time to fix them. On demo day: use the cloud if it's healthy, otherwise switch to the laptop in about a minute.
 3. **AI false triggers:** keep as a known limitation for the presentation, or run the one-afternoon experiment from `DOCS/08-10-2026 AI false trigger analysis.md` (step 1 there) first?
 
 ### Step 6b. Background listening (foreground service). Do after the AI false-trigger fix; plan first, then code
@@ -202,9 +211,31 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
   - a release build succeeds;
   - screenshots from an emulator match the preview. The real-phone check is in step 9.
 
-### Step 8. Cloud deployment (only if chosen in step 6)
-- **What:** run the Fabric network, gateway and portal on a cloud server; point `GATEWAY_URL` at it; secure the gateway (it has no login today; signatures prevent forgery, but anyone who can reach it can call it).
-- **Done when:** the live Dart tests and failure tests pass against the cloud address.
+### Step 8. Reachable gateway: laptop + tunnel now (8a), cloud later (8b)
+**Decided 15-10-2026** (step 6, question 2).
+
+**8a. Laptop + ngrok tunnel. Do first.**
+- **What:**
+  - **The tunnel:** an ngrok tunnel (free plan, one **fixed** address such as `xyz.ngrok-free.app`) in front of the gateway on the laptop. `GATEWAY_URL` in `.env` points at that address, so the phones reach the gateway over mobile data, with no shared Wi-Fi needed.
+  - **A gateway password:** an API key the app sends with every request. The gateway has no login today; signatures prevent forgery, but anyone who can reach it can call it.
+  - **The officer portal stays on the laptop, localhost only.** It holds the simulated police key and is never exposed.
+- **Needs from you:**
+  - a free ngrok account, with its free static domain claimed;
+  - the authtoken saved in a git-ignored file. **Never paste it in the chat.**
+- **Done when:** the live Dart tests pass through the tunnel address, and a phone on mobile data (Wi-Fi off) anchors a clip.
+
+**8b. Cloud machine. An optional upgrade, around days 3–7 before submission.**
+- **What:**
+  - the same Fabric network and gateway on a cloud VM (Azure for Students, or Google Cloud's trial), with about 8 GB RAM and Docker;
+  - the ngrok agent runs on the VM instead of the laptop, so the **same fixed address** now points at the cloud and the phones need no rebuild;
+  - the portal stays on the laptop and reaches the cloud network's SimPolice peer through an SSH tunnel.
+- **Fallback:** stop the tunnel on the VM and start it on the laptop. The laptop network must be kept intact (never `network.sh down`).
+- **Caveat:** each setup has its **own ledger**. Clips recorded on one don't exist on the other, so don't switch in the middle of a demo story; the recovery-code restore must use the ledger the clips were recorded on.
+- **Needs from you:** the cloud account (Azure for Students with the college email, or a Google Cloud trial).
+- **Done when:**
+  - the live Dart tests and failure tests pass against the cloud;
+  - the portal opens a clip through the SSH tunnel;
+  - the switch back to the laptop has been practised once.
 
 ### Step 9. Phone session (needs both phones; last)
 In this order, on a fresh install of the signed release APK with the final name:
