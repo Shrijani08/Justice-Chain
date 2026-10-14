@@ -178,6 +178,22 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
 2. **Cloud deployment:** keep the network and gateway on the laptop for the demo (both phones on the same Wi-Fi), or move them to a cloud server so the demo doesn't depend on the laptop? If cloud, step 8 is added and needs your cloud account.
 3. **AI false triggers:** keep as a known limitation for the presentation, or run the one-afternoon experiment from `DOCS/08-10-2026 AI false trigger analysis.md` (step 1 there) first?
 
+### Step 6b. Background listening (foreground service). Do after the AI false-trigger fix; plan first, then code
+**Found 14-10-2026 during AI experiment 2 on the Vivo:** when the phone is locked or the app isn't on screen, Android stops giving the app the microphone, so **automatic detection only works while Sakshya is open**. The SOS button and "112 =" are unaffected (they need the app open anyway).
+- **What:**
+  - **A foreground service:** a small Kotlin service declared as type `microphone` (and `camera`), with the matching permissions in `AndroidManifest.xml` (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS`) and a notification channel. Android lets such a service keep running in the background as long as it shows a **permanent notification** (e.g. "Sakshya is protecting you").
+  - **Start and stop:** the service is started when monitoring starts, which happens while the app is on screen. Android requires that: a microphone service can't be started from the background. It stops when the user turns protection off. Our existing Dart AI code then keeps listening with the screen off.
+  - **Recording while locked:** the hard part. Starting a *video* recording from the background is restricted, and the Flutter camera plugin expects the app on screen. A realistic first version records **audio** when the phone is locked and video when the app is open. Check both phones (Vivo and Samsung behave differently).
+  - **If the app is swiped away:** the Flutter engine stops with it. Keeping listening after that needs a separate background engine. Decide whether that's in scope or future work.
+  - **Disguise mode:** the permanent notification would give the app away. In disguise mode it needs neutral wording and icon (e.g. "Calculator" or "Running"). **A design decision for you.**
+  - **Battery:** continuous listening drains battery. Measure the drain per hour on both phones and report it.
+- **Why after the AI fix:** today the model false-triggers about 100 times an hour of ordinary talking (experiment 1). Listening all day in the background would mean dozens of unwanted recordings and uploads per day.
+- **Done when:**
+  - with the phone locked, a test distress sound is detected and a recording is saved and uploaded;
+  - the notification shows the right wording in normal and disguise mode;
+  - battery drain per hour is measured on both phones;
+  - unit tests are green. The real-phone checks are part of step 9.
+
 ### Step 7. UI redesign (after you approve the preview)
 - **What:** build the approved design in Flutter, including the new screens for steps 4 and 5: the police opt-in, "Access requests" and "Release my piece".
 - **Why after 4–5:** those screens are designed and built once, in the new style.
@@ -207,6 +223,7 @@ In this order, on a fresh install of the signed release APK with the final name:
    - PIN then = opens the app;
    - 112 then = starts SOS without unlocking;
    - switch back to Sakshya.
-8. **Redesign on real hardware:** screenshots of every screen, checking for layout or text issues on both phones.
+8. **Background listening (step 6b):** lock the phone, play a test distress sound, and check a recording is made and uploaded. Check the notification wording in normal and disguise mode, and measure battery drain.
+9. **Redesign on real hardware:** screenshots of every screen, checking for layout or text issues on both phones.
 
 Then record the results in a device test log, commit, and tick 4c, 8d, 9c, 10b and Step 12 in the design-doc checklist.
