@@ -93,6 +93,36 @@ Risks:
 
 **Also found:** when the phone is locked or the app isn't on screen, Android gives the app no microphone. Automatic detection only works with Sakshya open. This is planned as step 6b (foreground service) in `DOCS/14-10-2026 remaining steps.md`.
 
+## Experiments 3 and 4 results (14-10-2026, on the laptop)
+
+**Script:** `tools/ai/score_experiments.py`, run with the E: venv. Output: `results.json` and `results.md` in the experiment 2 folder. It works around two environment problems:
+- a broken DirectML plugin in the user site-packages stops TensorFlow from loading;
+- the original SavedModel can't be opened by Keras 3, so it is run as a TF1 graph.
+
+**Experiment 3, phone model vs original model:** on 240 identical inputs the TFLite model gives the same label 99.2% of the time, with an average difference of 0.013 (largest 0.34). Compression is **not** the cause.
+
+**Experiment 4, the phone test set scored with each preprocessing (app's TFLite model):**
+
+| Set (should be) | App today | + pre-emphasis only | + RMS to 0.1 only | Training (all steps) |
+|---|---|---|---|---|
+| Speech (normal): correct | 74% | 58% | **97%** | 85% |
+| Speech: would-trigger per hour | 187 | 23 | 23 | 140 |
+| Acted screams (distress): correct | 17% | **65%** | 16% | 38% |
+| Laughter (happy): correct | 0% | 0% | 0% | 6% |
+| Experiment 1's false triggers: still ≥ 80% distress | 100% | 10% | 9% | 39% |
+
+**Baseline, the training split's own test clips:** distress 97% correct, normal 94%, **happy 7%**. These figures are inflated by the data leakage described above.
+
+**Verdict: both suspects, mostly B.**
+- **Suspect A is real:** preprocessing changes the answers a lot. The false-trigger clips drop from 100% to 9–39% "distress".
+- **But no preprocessing fixes it.** Every variant that stops the speech false triggers also stops detecting screams, and the reverse:
+  - RMS-only: speech 97% right, screams 16%;
+  - pre-emphasis-only: screams 65%, speech 58%;
+  - the full training pipeline, which the model was trained on: speech still triggers about 140 times an hour and catches only 38% of screams.
+- On its own test clips the same model scores 94–97%. So it learned its dataset, not distress: it **doesn't generalise to real phone audio** (Suspect B).
+- **The "happy" class doesn't work at all**, even on its own test data (7%). It is too small (162 test clips) and has no class weights.
+- **Conclusion:** a Dart preprocessing fix alone won't make automatic detection reliable. Go to plan step 2 (retraining), after the team agrees. Meanwhile the SOS button and "112 =" are the reliable triggers. For the presentation, automatic detection is a prototype with measured limits.
+
 ## Plan (in order; ask before retraining)
 
 1. **Experiment to tell A from B (a few hours):**
