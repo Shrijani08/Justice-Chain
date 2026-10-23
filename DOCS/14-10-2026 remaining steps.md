@@ -203,7 +203,18 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
 - **Notification:** normal "Sakshya is protecting you"; disguised "Calculator · New calculations? The numbers miss you.", calculator icon, hidden on the lock screen.
   - Android always heads a notification with the app's real name and icon. **Decided: hide it in disguise mode.** An app-created switched-off channel is forced back on for a foreground service (`mOriginalImp=0`, `mImportance=2`), so the service moves to its own "Background" channel and **the user turns that channel off once** (long-press the notification). Then nothing shows and listening continues (checked: ~15 min, screen off). Phase 3 must guide this step when disguise is turned on.
 - **Open:** one stall at 20:09:43: after an AI recording in disguise while the screen was torn down, audio kept arriving natively but the Dart AI stopped. Not reproduced since; a debug-only state line now prints every 10 s. Phase 2 (native background recorder) and Phase 3 (dead-stream watchdog) cover this path.
-- **Next:** Phase 2, CameraX background recorder with audio fallback.
+
+**Phase 2 done 23-10-2026 (background recorder), checked on the Vivo with the acted screams played from the laptop:**
+- **Code:** `BackgroundRecorder.kt` (CameraX 1.3.3, the QR scanner's version; HD falling back to SD; no preview; 45 s limit; if no frames arrive within 4 s, or the camera can't be bound, it records AAC audio in an MP4). The `record`/`stopRecording` channel calls; `ProtectionService.recordInBackground`; `EmergencyController.startBackgroundRecording` (used when the home screen doesn't hold the camera); the home screen lets the camera go when the app leaves the screen and takes it back on return (not during a recording, nor while the QR scanner has it). 8 tests in `test/background_recording_test.dart`; full suite 181 pass.
+- **Locked:** trigger 3 s into the screams; 45 s HD video (50 MB) with the screen off; sealed; listening resumed.
+- **Swiped away + locked:** 45 s video, sealed, listening resumed.
+- **Camera busy (Vivo Camera app open):** no frames after 4 s, so audio only (~40 s, 487 KB), sealed, listening resumed.
+- **Back on screen:** the home screen reopened the camera.
+- **Two bugs found and fixed:**
+  - listening never resumed after a recording made while swiped away: the `record` plugin's `hasPermission()` answers false with no screen attached. Now `permission_handler` checks it;
+  - sealing ran on the main isolate, so the AI was deaf for 40 s after each recording, and 3.5 min when swiped away (the Vivo throttles it). Hashing and AES-GCM now run with `Isolate.run`; the AI keeps listening and the seal took ~43 s swiped away.
+- **Not checked yet:** upload of these clips (the gateway wasn't running; they wait in the outbox) and playback of an audio-only clip in My Evidence. Both go into step 9.
+- **Next:** Phase 3 (the "Keep listening while disguised" switch, guiding the one-time notification switch-off, restart after a phone call / dead stream, battery-optimisation exemption).
 
 **Found 14-10-2026 during AI experiment 2 on the Vivo:** when the phone is locked or the app isn't on screen, Android stops giving the app the microphone, so **automatic detection only works while Sakshya is open**. The SOS button and "112 =" are unaffected (they need the app open anyway).
 - **What:**

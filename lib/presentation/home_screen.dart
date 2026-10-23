@@ -31,16 +31,26 @@ class MainSafetyScreen extends StatefulWidget {
   State<MainSafetyScreen> createState() => _MainSafetyScreenState();
 }
 
-class _MainSafetyScreenState extends State<MainSafetyScreen> {
+class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBindingObserver {
   CameraController? _cameraController;
   bool _isProcessingSave = false;
+  EffectCleanup? _cameraEffectCleanup;
+  bool _cameraPermitted = false;
+  bool _cameraLent = false; // another screen (the QR scanner) is using it
+  bool _cameraSyncing = false;
+  bool _cameraResync = false;
   EffectCleanup? _distressEffectCleanup;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initPermissions();
     _setupAutomaticTrigger();
+    // When a recording ends, take the camera back or let it go to match the screen.
+    _cameraEffectCleanup = effect(() {
+      if (!isRecording.value) unawaited(_syncCamera());
+    });
   }
 
   void _setupAutomaticTrigger() {
@@ -67,6 +77,8 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _cameraEffectCleanup?.call();
     _distressEffectCleanup?.call();
     unawaited(EmergencyController.shutdownMonitoring());
     _cameraController?.dispose();
@@ -108,6 +120,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       await EmergencyController.startBackgroundMonitoring();
     }
 
+    _cameraPermitted = hasCameraPermission && hasMicrophonePermission;
     if (hasCameraPermission && hasMicrophonePermission) {
       logger.i("Camera Permission Granted.");
       await _initializeCamera();
@@ -182,13 +195,48 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       );
       return;
     }
+    _cameraLent = true;
     await _releaseCamera();
-    if (!mounted) return;
+    if (!mounted) {
+      _cameraLent = false;
+      return;
+    }
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => screen),
     );
+    _cameraLent = false;
     if (mounted) await _initializeCamera();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) => unawaited(_syncCamera());
+
+  /// The home screen holds the camera only while the app is on screen, so
+  /// the background recorder can use it otherwise (step 6b). A recording
+  /// already running with it finishes first; this runs again when it ends.
+  Future<void> _syncCamera() async {
+    if (_cameraSyncing) {
+      _cameraResync = true;
+      return;
+    }
+    _cameraSyncing = true;
+    try {
+      do {
+        _cameraResync = false;
+        if (isRecording.value || _cameraLent || !mounted) break;
+        final state = WidgetsBinding.instance.lifecycleState;
+        if (state == AppLifecycleState.resumed) {
+          if (_cameraController == null && _cameraPermitted) await _initializeCamera();
+        } else if (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.detached) {
+          if (_cameraController != null) await _releaseCamera();
+        }
+      } while (_cameraResync);
+    } finally {
+      _cameraSyncing = false;
+    }
   }
 
   Future<void> startEmergencyRecording() async {
@@ -225,6 +273,11 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
   /// path runs independently through EmergencyController and
   /// EvidenceVaultService, with no dependency on this screen being mounted.
   Future<void> stopEmergencyRecording() async {
+    if (EmergencyController.isBackgroundRecording) {
+      // Started while the app was away; the controller seals it.
+      await EmergencyController.stopRecording();
+      return;
+    }
     if (_cameraController == null ||
         !_cameraController!.value.isRecordingVideo) {
       return;

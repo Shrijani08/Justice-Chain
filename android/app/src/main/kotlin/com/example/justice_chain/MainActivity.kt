@@ -55,6 +55,14 @@ class MainActivity : FlutterActivity() {
                             result.success(true)
                         }
                         "isRunning" -> result.success(ProtectionService.running)
+                        // Answers when the clip is finished (or stopped): {path, kind} or {error}.
+                        "record" -> BackgroundRecorder.start(app, call.argument<Int>("seconds") ?: 45) {
+                            result.success(it)
+                        }
+                        "stopRecording" -> {
+                            BackgroundRecorder.stop()
+                            result.success(true)
+                        }
                         else -> result.notImplemented()
                     }
                 } catch (e: Exception) {

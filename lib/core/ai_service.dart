@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -169,7 +170,10 @@ class AIService {
       return;
     }
 
-    final hasMicrophonePermission = await _audioRecorder.hasPermission();
+    // Not _audioRecorder.hasPermission(): the record plugin answers false
+    // whenever no screen is attached, so listening never resumed after a
+    // recording made while the app was swiped away (step 6b).
+    final hasMicrophonePermission = await Permission.microphone.isGranted;
     if (!hasMicrophonePermission) {
       aiStatus.value = 'AI monitoring paused: microphone permission needed';
       return;

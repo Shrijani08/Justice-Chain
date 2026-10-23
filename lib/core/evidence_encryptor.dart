@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -78,22 +79,28 @@ class EvidenceEncryptor {
       throw ArgumentError('No file at $plaintextPath to encrypt.');
     }
 
-    final plaintextBytes = await plaintextFile.readAsBytes();
-    final plaintextHash = crypto.sha256.convert(plaintextBytes).toString();
+    // Hashing and encrypting a 50 MB clip takes from 40 s to minutes on a
+    // phone, so both run on another isolate: on this one the AI would stop
+    // listening for that long after every recording (step 6b). The key and
+    // signature stay here, because they need the secure-storage plugin.
+    final plaintextHash = await Isolate.run(
+      () async => crypto.sha256.convert(await File(plaintextPath).readAsBytes()).toString(),
+    );
 
-    final cipherAlgorithm = AesGcm.with256bits();
     // From the recovery code when the phone has one, so a restored phone can
     // rebuild it; random on phones set up before recovery codes.
     final incidentKey =
-        await IdentityService.clipKeyFor(plaintextHash) ?? await cipherAlgorithm.newSecretKey();
-
-    final secretBox = await cipherAlgorithm.encrypt(
-      plaintextBytes,
-      secretKey: incidentKey,
-    );
+        await IdentityService.clipKeyFor(plaintextHash) ?? await AesGcm.with256bits().newSecretKey();
+    final keyBytes = await incidentKey.extractBytes();
 
     final cipherPath = '$plaintextPath.enc';
-    await File(cipherPath).writeAsBytes(_packSecretBox(secretBox));
+    await Isolate.run(() async {
+      final secretBox = await AesGcm.with256bits().encrypt(
+        await File(plaintextPath).readAsBytes(),
+        secretKey: SecretKey(keyBytes),
+      );
+      await File(cipherPath).writeAsBytes(_packSecretBox(secretBox));
+    });
 
     final wrappedKeyB64 = await _wrapIncidentKey(incidentKey);
     final signatureB64 = await IdentityService.signBytes(

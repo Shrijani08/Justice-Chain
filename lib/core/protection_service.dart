@@ -14,6 +14,16 @@ import 'disguise_service.dart';
 /// Android only lets it start while the app is on screen, so [startIfEnabled]
 /// is called when monitoring starts. It is on by default; until the redesign's
 /// settings screen, the home screen has its on/off row.
+/// A clip from [ProtectionService.recordInBackground]: an MP4 either way.
+class BackgroundClip {
+  const BackgroundClip({required this.path, required this.audioOnly});
+
+  final String path;
+
+  /// The camera couldn't be used, so only sound was recorded.
+  final bool audioOnly;
+}
+
 class ProtectionService {
   ProtectionService._();
 
@@ -60,6 +70,33 @@ class ProtectionService {
       return false;
     }
   }
+
+  /// Records a clip natively while the app isn't on screen (BackgroundRecorder.kt):
+  /// video, or audio only if the camera can't be used. Completes when the
+  /// clip is finished, after at most [maxLength] or [stopRecording]; null if
+  /// nothing could be recorded.
+  static Future<BackgroundClip?> recordInBackground(Duration maxLength) async {
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>(
+        'record',
+        {'seconds': maxLength.inSeconds},
+      );
+      final path = result?['path'];
+      if (path is! String) {
+        developer.log('Background recording failed: ${result?['error']}', name: 'JusticeChain.Protection');
+        return null;
+      }
+      return BackgroundClip(path: path, audioOnly: result?['kind'] == 'audio');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (e) {
+      developer.log('Background recording failed: $e', name: 'JusticeChain.Protection');
+      return null;
+    }
+  }
+
+  /// Ends a [recordInBackground] clip early.
+  static Future<bool> stopRecording() => _invoke('stopRecording');
 
   static void _onDisguiseChanged() {
     _invoke('setDisguised', {'disguised': DisguiseService.enabled.value});

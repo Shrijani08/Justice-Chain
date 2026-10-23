@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+
+import 'package:flutter/foundation.dart';
+
 import 'ai_service.dart';
 import 'evidence_vault_service.dart';
 import 'mesh_service.dart';
@@ -38,19 +41,74 @@ class EmergencyController {
           return;
         }
 
-        // If the AI confirms a valid distress event, flip the signal to let the UI effect handle it cleanly
+        if (_backgroundRecording) return;
+
         if (event.label.toLowerCase() == 'distress') {
           developer.log(
             '🔥 AI Brain verified distress status ($confidencePercent%). Firing reactive safety signal.',
             name: 'JusticeChain.Controller',
           );
-          aiDistressDetected.value = true;
+          if (_holdsCamera) {
+            // The app is on screen: the home screen records with its camera.
+            aiDistressDetected.value = true;
+          } else {
+            // Locked, in the background or swiped away: the home screen has
+            // let the camera go, so record natively.
+            unawaited(startBackgroundRecording());
+          }
         }
       },
     );
     // Keeps listening after the screen locks or the app is swiped away.
     // Started here because monitoring starts while the app is on screen.
     await ProtectionService.startIfEnabled();
+  }
+
+  static bool get _holdsCamera =>
+      cameraController != null && cameraController!.value.isInitialized as bool;
+
+  static bool _backgroundRecording = false;
+
+  /// Whether a native background recording is running (the home screen's
+  /// stop button ends it through [stopRecording]).
+  static bool get isBackgroundRecording => _backgroundRecording;
+
+  /// Seals a finished clip; tests swap it for a fake.
+  @visibleForTesting
+  static Future<void> Function(String path) sealClip = EvidenceVaultService.sealAndUpload;
+
+  /// Records with the native recorder while the app isn't on screen (step
+  /// 6b): video, or audio only if the camera can't be used, for up to
+  /// [recordingTimeout]. Then listening resumes and the clip is sealed and
+  /// uploaded like any other.
+  static Future<void> startBackgroundRecording() async {
+    if (_backgroundRecording || isRecording.value) return;
+    _backgroundRecording = true;
+    BackgroundClip? clip;
+    try {
+      // The recorder needs the microphone the AI is using.
+      await _aiService.pauseForRecording();
+      isRecording.value = true;
+      appStatus.value = "RECORDING EVIDENCE...";
+      unawaited(MeshService.startAdvertising());
+      developer.log('🎬 Background recording started.', name: 'JusticeChain.Controller');
+
+      clip = await ProtectionService.recordInBackground(recordingTimeout);
+    } finally {
+      isRecording.value = false;
+      _backgroundRecording = false;
+      await _aiService.resumeAfterRecording();
+    }
+
+    if (clip == null) {
+      appStatus.value = "Recording failed";
+      return;
+    }
+    developer.log(
+      'Background ${clip.audioOnly ? 'audio' : 'video'} clip finished: ${clip.path}',
+      name: 'JusticeChain.Controller',
+    );
+    await sealClip(clip.path);
   }
 
   static Future<void> simulateAIDistressDetection() async {
@@ -112,6 +170,12 @@ class EmergencyController {
   static dynamic stopRecording() async {
     _recordingTimeoutTimer?.cancel();
     _recordingTimeoutTimer = null;
+
+    if (_backgroundRecording) {
+      // startBackgroundRecording gets the clip and seals it.
+      await ProtectionService.stopRecording();
+      return null;
+    }
 
     if (cameraController == null || !cameraController!.value.isRecordingVideo) {
       return null;

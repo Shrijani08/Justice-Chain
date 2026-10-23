@@ -75,4 +75,14 @@ flutter {
 dependencies {
     // ProtectionService: NotificationCompat, ServiceCompat.startForeground with a type.
     implementation("androidx.core:core-ktx:1.13.1")
+    // BackgroundRecorder: video while the app isn't on screen. The same
+    // CameraX version mobile_scanner (the QR scanner) uses, so it isn't
+    // silently upgraded under it.
+    val cameraX = "1.3.3"
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-video:$cameraX")
+    // ProcessCameraProvider.getInstance() returns Guava's ListenableFuture; a
+    // plugin pins listenablefuture to its empty "use full Guava" version.
+    implementation("com.google.guava:guava:33.3.1-android")
 }
