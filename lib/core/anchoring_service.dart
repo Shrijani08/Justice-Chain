@@ -48,7 +48,7 @@ class AnchoringService {
           contractAddress: required('CONTRACT_ADDRESS'),
           submitterPrivateKey: required('HARDHAT_SUBMITTER_PRIVATE_KEY'),
         ),
-      'fabric' => FabricLedgerService(gatewayUrl: required('GATEWAY_URL')),
+      'fabric' => FabricLedgerService(gatewayUrl: required('GATEWAY_URL'), apiKey: env['GATEWAY_API_KEY']),
       _ => throw StateError('LEDGER in .env must be "evm" or "fabric", not "$ledger"'),
     };
   }

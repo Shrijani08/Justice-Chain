@@ -45,11 +45,12 @@ void main() {
   // this test talks to the real gateway.
   HttpOverrides.global = null;
   final gatewayUrl = Platform.environment['FABRIC_GATEWAY_URL'];
+  final gatewayKey = {'X-Api-Key': Platform.environment['FABRIC_GATEWAY_API_KEY'] ?? ''};
   final phase = Platform.environment['JC_LIVE_PHASE'];
 
   Future<Map<String, dynamic>> post(String path, Object body) async {
     final response = await http.post(Uri.parse('$gatewayUrl$path'),
-        headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+        headers: {...gatewayKey, 'Content-Type': 'application/json'}, body: jsonEncode(body));
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     if (response.statusCode != 200) {
       throw StateError('POST $path -> ${response.statusCode}: ${decoded['error']}');
@@ -57,7 +58,7 @@ void main() {
     return decoded;
   }
 
-  Future<dynamic> get(String path) async => jsonDecode((await http.get(Uri.parse('$gatewayUrl$path'))).body);
+  Future<dynamic> get(String path) async => jsonDecode((await http.get(Uri.parse('$gatewayUrl$path'), headers: gatewayKey)).body);
 
   Future<Map<String, String>> newRegisteredPhone() async {
     _becomePhone({});
@@ -112,7 +113,7 @@ void main() {
       await ipfs.parent.create(recursive: true);
       await ipfs.writeAsBytes(ciphertext);
 
-      await FabricLedgerService(gatewayUrl: gatewayUrl!).recordAnchor(
+      await FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY']).recordAnchor(
         manifestHashHex: sealed.plaintextHash,
         cid: cid,
         capturedAt: sealed.encryptedAt,

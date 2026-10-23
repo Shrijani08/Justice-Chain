@@ -34,11 +34,12 @@ void main() {
   // this test talks to the real gateway.
   HttpOverrides.global = null;
   final gatewayUrl = Platform.environment['FABRIC_GATEWAY_URL'];
+  final gatewayKey = {'X-Api-Key': Platform.environment['FABRIC_GATEWAY_API_KEY'] ?? ''};
 
   Future<Map<String, dynamic>> post(String path, Map<String, Object?> body) async {
     final response = await http.post(
       Uri.parse('$gatewayUrl$path'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {...gatewayKey, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -49,7 +50,7 @@ void main() {
   }
 
   Future<dynamic> get(String path) async =>
-      jsonDecode((await http.get(Uri.parse('$gatewayUrl$path'))).body);
+      jsonDecode((await http.get(Uri.parse('$gatewayUrl$path'), headers: gatewayKey)).body);
 
   test(
     'live: a registered phone shares one sealed key piece with SimPolice',
@@ -78,7 +79,7 @@ void main() {
 
       // 2. Anchor a clip, as the app does after an upload.
       final hash = _sha256Hex(utf8.encode('step 8 live ${DateTime.now().microsecondsSinceEpoch} ${Random().nextInt(1 << 32)}'));
-      await FabricLedgerService(gatewayUrl: gatewayUrl!).recordAnchor(
+      await FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY']).recordAnchor(
         manifestHashHex: hash,
         cid: 'bafystep8livetest',
         capturedAt: DateTime.now(),

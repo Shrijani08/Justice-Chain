@@ -56,6 +56,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null; // talk to the real gateway
   final gatewayUrl = Platform.environment['FABRIC_GATEWAY_URL'];
+  final gatewayKey = {'X-Api-Key': Platform.environment['FABRIC_GATEWAY_API_KEY'] ?? ''};
 
   test(
     'live: the app registers, syncs its guardian and shares a piece with SimPolice',
@@ -66,7 +67,7 @@ void main() {
       await Hive.openBox(OutboxService.boxName);
       OutboxService.manageAdvertising = false;
       final client = _RecordingClient();
-      final gateway = FabricLedgerService(gatewayUrl: gatewayUrl!, client: client);
+      final gateway = FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY'], client: client);
       AuthorityService.gatewayForTest = gateway;
       AuthorityService.demoBuildForTest = true;
       AnchoringService.ledgerForTest = gateway;
@@ -124,7 +125,7 @@ void main() {
         final share = record['authorityShare'] as Map;
         expect(share['msp'], 'SimPoliceMSP');
         expect(share['blockNumber'], greaterThan(0));
-        final listed = await http.get(Uri.parse('$gatewayUrl/authority-shares/SimPoliceMSP'));
+        final listed = await http.get(Uri.parse('$gatewayUrl/authority-shares/SimPoliceMSP'), headers: gatewayKey);
         expect((jsonDecode(listed.body) as List).map((c) => c['manifestHash']), contains(key));
 
         // The piece the app sealed, recomputed from the clip key (the vault's

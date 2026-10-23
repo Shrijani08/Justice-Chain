@@ -10,7 +10,23 @@
   - phone-vs-laptop parity on 16 saved windows: largest difference 0.004, same pass/fail 100%;
   - in about 2 minutes of talking, YAMNet passed **0** windows (top class "Speech" 101 times), while the old model, logged alongside, passed 16;
   - **the single short test scream scored only 0.15 (heard as "Animal"), below 0.2.** One scream is not an episode, and per this plan the threshold is tuned only once, in step 9, on the validation data. Watch this in step 8: if 10 s episodes are also missed on the Vivo, step 9 lowers the threshold.
-- **Next:** step 8, the validation session.
+- **Step 8 on the Vivo, part 1 done (15-10-2026, 18:52–20:06):** data in `D:/Justice-Chain/ai_experiments/2026-10-15_validation_vivo` (outside git: testers' voices), with `markers.txt` for when each part started.
+
+  | Part | Windows with sound | YAMNet false triggers | Highest YAMNet score | Old model, windows passed |
+  |---|---|---|---|---|
+  | One speaker | 361 | **0** | 0.06 | 66 |
+  | Conversation (4 min, then a call cut it off; 7 more min later) | 556 | **0** | 0.06 | 82 |
+  | TV / music (two stretches) | 751 | **0** | 0.199 (twice, single windows, "Speech" from TV) | 10 |
+  | **Total ≈ 28 min of sound** | 1,668 | **0** (target ≤ 2 per hour) | | 158 |
+
+  - **Scream 1: detected about 1 s after it started** ("Crying; sobbing", 0.80).
+  - **Screams 2–5: not done yet.** Scream 2 wasn't heard, because the app was off screen (see below). Redo them in daylight on 16-10.
+  - **Inference:** 108 ms median, 144 ms p95 per 2 s window over 2,096 windows (one 1,075 ms outlier). Target < 300 ms: met.
+  - **Threshold note:** TV twice reached 0.199. Lowering the threshold in step 9 would start to catch TV, so only lower it if the screams need it.
+  - **Two app problems found (for step 6b):**
+    1. after an incoming phone call took the microphone (19:05:07), listening never restarted, although the app came back on screen;
+    2. when the app is not on screen (home screen, WhatsApp), the microphone gives exact zeros. This is the known reason for step 6b.
+- **Next:** screams 2–5 on the Vivo (with the app kept on screen and calls blocked), then the Samsung session, then step 9.
 
 ## 1. What changes for the user
 

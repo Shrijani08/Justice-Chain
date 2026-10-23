@@ -53,7 +53,7 @@ class AuthorityService {
       if ((dotenv.env['LEDGER'] ?? '').trim().toLowerCase() != 'fabric') return null;
       final url = dotenv.env['GATEWAY_URL']?.trim() ?? '';
       if (url.isEmpty) return null;
-      return _gateway ??= FabricLedgerService(gatewayUrl: url);
+      return _gateway ??= FabricLedgerService(gatewayUrl: url, apiKey: dotenv.env['GATEWAY_API_KEY']);
     } catch (_) {
       return null; // .env not loaded (tests, early start-up)
     }
@@ -112,7 +112,15 @@ class AuthorityService {
   /// Registers this phone's ID and keys on the ledger, once. The payload is
   /// signed by both keys, so no one can claim this phone's ID; repeating it
   /// with the same keys is accepted by the ledger.
-  static Future<void> registerThisPhone() async {
+  static Future<void> registerThisPhone() =>
+      // Callers overlap (guardian sync, the outbox, opting in). Two
+      // registrations sent together collide on the ledger (read conflict,
+      // HTTP 502), so a second caller waits for the one in flight.
+      _registering ??= _register().whenComplete(() => _registering = null);
+
+  static Future<void>? _registering;
+
+  static Future<void> _register() async {
     final ledger = _requireLedger();
     final nodeId = await IdentityService.getMyNodeId();
     if (_box.get(_registeredKey) == nodeId) return;
@@ -149,7 +157,19 @@ class AuthorityService {
   /// The ledger only accepts registered phones, so a guardian who hasn't
   /// opened Sakshya yet is left out and the sync throws, which makes the
   /// outbox try again later; once they register, they are added.
-  static Future<void> syncGuardians() async {
+  ///
+  /// Syncs run one at a time: two sent together collide on the ledger
+  /// (read conflict, HTTP 502). A later one reads the list again, so it
+  /// sends nothing if the earlier one already brought the ledger up to date.
+  static Future<void> syncGuardians() {
+    final run = (_guardianSync ?? Future<void>.value()).catchError((_) {}).then((_) => _syncGuardians());
+    _guardianSync = run;
+    return run;
+  }
+
+  static Future<void>? _guardianSync;
+
+  static Future<void> _syncGuardians() async {
     final ledger = _requireLedger();
     await registerThisPhone();
     if (_box.get(_guardianSyncPausedKey) == true) return;

@@ -31,6 +31,9 @@ class _FakeGateway {
   bool failNextRelease = false;
   final posts = <String, List<Map<String, dynamic>>>{};
 
+  /// How long a write takes to commit, like the real ledger (about 2 s).
+  Duration commitDelay = Duration.zero;
+
   http.Response _json(Object body, [int status = 200]) => http.Response(jsonEncode(body), status);
 
   Future<http.Response> handle(http.Request r) async {
@@ -54,6 +57,7 @@ class _FakeGateway {
     }
     final body = jsonDecode(r.body) as Map<String, dynamic>;
     posts.putIfAbsent(path, () => []).add(body);
+    await Future<void>.delayed(commitDelay);
     switch (path) {
       case '/nodes':
         nodes[body['nodeId'] as String] = {'nodeId': body['nodeId'], 'anchoringAddress': body['anchoringAddress']};
@@ -165,6 +169,25 @@ void main() {
       );
       expect(edOk, isTrue);
     });
+
+    test('callers at the same moment send one registration, not two', () async {
+      // Two at once collided on the live ledger (read conflict, HTTP 502).
+      await Future.wait([
+        AuthorityService.registerThisPhone(),
+        AuthorityService.registerThisPhone(),
+        AuthorityService.syncGuardians(),
+      ]);
+      expect(gateway.posts['/nodes'], hasLength(1));
+    });
+  });
+
+  test('guardian syncs at the same moment run one after another; the second sends nothing', () async {
+    const a = 'aaaaaaaaaaaaaaaa';
+    await addGuardianContact(a);
+    gateway.nodes[a] = {'nodeId': a};
+    gateway.commitDelay = const Duration(milliseconds: 50);
+    await Future.wait([AuthorityService.syncGuardians(), AuthorityService.syncGuardians()]);
+    expect(gateway.posts['/guardians'], hasLength(1));
   });
 
   group('syncGuardians', () {

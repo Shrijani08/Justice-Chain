@@ -96,7 +96,7 @@ void main() {
       await Hive.openBox(OutboxService.boxName);
       final received = await Hive.openBox(MeshService.receivedSharesBoxName);
       OutboxService.manageAdvertising = false;
-      final gateway = FabricLedgerService(gatewayUrl: gatewayUrl!);
+      final gateway = FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY']);
       AuthorityService.gatewayForTest = gateway;
       AuthorityService.demoBuildForTest = true;
       AnchoringService.ledgerForTest = gateway;

@@ -72,11 +72,12 @@ void main() {
   // this test talks to the real gateway.
   HttpOverrides.global = null;
   final gatewayUrl = Platform.environment['FABRIC_GATEWAY_URL'];
+  final gatewayKey = {'X-Api-Key': Platform.environment['FABRIC_GATEWAY_API_KEY'] ?? ''};
   final phase = Platform.environment['JC_LIVE_PHASE'];
 
   Future<Map<String, dynamic>> post(String path, Object body) async {
     final response = await http.post(Uri.parse('$gatewayUrl$path'),
-        headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+        headers: {...gatewayKey, 'Content-Type': 'application/json'}, body: jsonEncode(body));
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     if (response.statusCode != 200) {
       throw StateError('POST $path -> ${response.statusCode}: ${decoded['error']}');
@@ -84,7 +85,7 @@ void main() {
     return decoded;
   }
 
-  Future<dynamic> get(String path) async => jsonDecode((await http.get(Uri.parse('$gatewayUrl$path'))).body);
+  Future<dynamic> get(String path) async => jsonDecode((await http.get(Uri.parse('$gatewayUrl$path'), headers: gatewayKey)).body);
 
   test(
     'live custody, share phase: victim and guardian register, victim shares piece 3 with SimPolice',
@@ -104,7 +105,7 @@ void main() {
       expect(list['guardians'], [guardianNode]);
 
       final hash = _sha256Hex(utf8.encode('step 9 live ${DateTime.now().microsecondsSinceEpoch} ${Random().nextInt(1 << 32)}'));
-      await FabricLedgerService(gatewayUrl: gatewayUrl!).recordAnchor(
+      await FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY']).recordAnchor(
         manifestHashHex: hash,
         cid: 'bafystep9livetest',
         capturedAt: DateTime.now(),

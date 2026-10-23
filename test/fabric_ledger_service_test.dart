@@ -109,6 +109,29 @@ void main() {
       });
     });
 
+    test('every request carries the API key; none is sent when there is no key', () async {
+      final sent = <http.BaseRequest>[];
+      MockClient client() => MockClient((request) async {
+            sent.add(request);
+            return request.method == 'POST' ? _json(_record()) : _json({'found': false, 'manifestHash': _hash});
+          });
+      final withKey = FabricLedgerService(gatewayUrl: 'http://gw:8800', apiKey: ' k3y ', client: client());
+      await withKey.verifyEvidence(_hash);
+      await withKey.recordAnchor(
+        manifestHashHex: _hash,
+        cid: 'bafytest',
+        capturedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        nodeId: _node,
+        signatureHex: 'ab' * 65,
+      );
+      expect(sent.map((r) => r.headers['X-Api-Key']), ['k3y', 'k3y']);
+      expect(sent.every((r) => r.headers['ngrok-skip-browser-warning'] == '1'), isTrue);
+
+      sent.clear();
+      await FabricLedgerService(gatewayUrl: 'http://gw:8800', client: client()).verifyEvidence(_hash);
+      expect(sent.single.headers.containsKey('X-Api-Key'), isFalse);
+    });
+
     test('a chaincode refusal (HTTP 400) throws LedgerRefusedException with its message', () async {
       final ledger = FabricLedgerService(
         gatewayUrl: 'http://gw:8800',
@@ -316,7 +339,7 @@ void main() {
           .convert(utf8.encode('justice-chain dart live test ${DateTime.now().microsecondsSinceEpoch} ${Random().nextInt(1 << 32)}'))
           .toString();
       final signature = bytesToHex(key.signPersonalMessageToUint8List(hexToBytes(hash)));
-      final ledger = FabricLedgerService(gatewayUrl: gatewayUrl!);
+      final ledger = FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY']);
 
       expect((await ledger.verifyEvidence(hash)).found, isFalse);
 

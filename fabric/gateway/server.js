@@ -7,6 +7,8 @@
  * (Org1). The victim's device signature travels inside the transaction
  * and is checked by the chaincode, so this gateway can't forge an anchor.
  *
+ * Every route except /health needs the X-Api-Key header (see API_KEY below).
+ *
  * Routes:
  *   GET  /health               ledger height, to check the connection
  *   POST /anchor               {manifestHash, cid, capturedAt, nodeId, signature}
@@ -67,6 +69,27 @@ const CONFIG = {
   tlsCertPath: path.join(ORG1, 'peers', 'peer0.org1.example.com', 'tls', 'ca.crt'),
 };
 const MAX_BODY_BYTES = 16 * 1024;
+
+// The gateway is reachable from the internet through the ngrok tunnel, so
+// every route except /health needs the shared API key in the X-Api-Key
+// header. Signatures already stop forged records; the key stops strangers
+// from using the gateway at all. The key comes from GATEWAY_API_KEY or the
+// git-ignored file api-key.txt next to this script. Without one, the
+// gateway refuses to start unless GATEWAY_ALLOW_NO_KEY=1 (local tests only).
+const API_KEY_FILE = path.join(__dirname, 'api-key.txt');
+const API_KEY = (process.env.GATEWAY_API_KEY ||
+  (fs.existsSync(API_KEY_FILE) ? fs.readFileSync(API_KEY_FILE, 'utf8') : '')).trim();
+if (!API_KEY && process.env.GATEWAY_ALLOW_NO_KEY !== '1') {
+  console.error(`No API key: create ${API_KEY_FILE} (see DOCS, step 8a) or set GATEWAY_API_KEY.`);
+  process.exit(1);
+}
+
+function hasApiKey(req) {
+  if (!API_KEY) return true;
+  const given = Buffer.from(String(req.headers['x-api-key'] || ''), 'utf8');
+  const expected = Buffer.from(API_KEY, 'utf8');
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
 
 function connectGateway() {
   const client = new grpc.Client(
@@ -255,6 +278,9 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
       send(res, 200, { ok: true, channel: CONFIG.channel, chaincode: CONFIG.chaincode, height: await ledgerHeight() });
+    } else if (!hasApiKey(req)) {
+      status = 401;
+      send(res, 401, { error: 'Missing or wrong API key' });
     } else if (req.method === 'POST' && url.pathname === '/anchor') {
       send(res, 200, await anchor(await readJson(req)));
     } else if (req.method === 'GET' && parts[0] === 'verify' && parts.length === 2) {

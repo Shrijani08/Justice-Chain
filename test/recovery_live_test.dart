@@ -44,7 +44,7 @@ void main() {
       Hive.init(tempDir.path);
       final vault = await Hive.openBox('vault_box');
       await Hive.openBox(OutboxService.boxName);
-      AnchoringService.ledgerForTest = FabricLedgerService(gatewayUrl: gatewayUrl!);
+      AnchoringService.ledgerForTest = FabricLedgerService(gatewayUrl: gatewayUrl!, apiKey: Platform.environment['FABRIC_GATEWAY_API_KEY']);
 
       try {
         // The old phone: no guardians, records and anchors two clips.

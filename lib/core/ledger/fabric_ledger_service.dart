@@ -18,12 +18,22 @@ class LedgerRefusedException implements Exception {
 /// Justice-Chain gateway (fabric/gateway/server.js). Phones have no Fabric
 /// SDK, so the gateway submits for them; the device signature inside each
 /// anchor is checked by the chaincode, so the gateway can't forge one.
+///
+/// [apiKey] is the gateway's shared key (GATEWAY_API_KEY in .env), sent as
+/// X-Api-Key on every request; the gateway refuses requests without it
+/// because it is reachable from the internet through the ngrok tunnel.
 class FabricLedgerService implements LedgerService {
-  FabricLedgerService({required String gatewayUrl, http.Client? client})
+  FabricLedgerService({required String gatewayUrl, String? apiKey, http.Client? client})
       : _base = gatewayUrl.trim().replaceFirst(RegExp(r'/+$'), ''),
+        _headers = {
+          if (apiKey != null && apiKey.trim().isNotEmpty) 'X-Api-Key': apiKey.trim(),
+          // ngrok's free plan shows browsers a warning page first; this skips it.
+          'ngrok-skip-browser-warning': '1',
+        },
         _client = client ?? http.Client();
 
   final String _base;
+  final Map<String, String> _headers;
   final http.Client _client;
 
   // Anchoring waits for the commit on both organisations' peers.
@@ -44,13 +54,13 @@ class FabricLedgerService implements LedgerService {
   }
 
   Future<dynamic> _get(String path) async =>
-      _decode(await _client.get(Uri.parse('$_base$path')).timeout(_queryTimeout));
+      _decode(await _client.get(Uri.parse('$_base$path'), headers: _headers).timeout(_queryTimeout));
 
   Future<Map<String, dynamic>> _post(String path, Map<String, Object?> body) async {
     final response = await _client
         .post(
           Uri.parse('$_base$path'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {..._headers, 'Content-Type': 'application/json'},
           body: jsonEncode(body),
         )
         .timeout(_submitTimeout);

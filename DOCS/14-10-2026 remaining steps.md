@@ -213,6 +213,7 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
   - **Disguise mode:** the permanent notification would give the app away. In disguise mode it needs neutral wording and icon (e.g. "Calculator" or "Running"). **A design decision for you.**
   - **Decided 15-10-2026 (microphone dot): a user switch, "Keep listening while disguised", on by default.** Android 12+ shows a green dot whenever the microphone is in use, and apps can't hide it. With the switch on, automatic detection keeps working under the calculator (and the dot shows). With it off, listening stops while disguised: no dot, and only "112 =" or the SOS button records. The same switch also controls the background service's notification. The switch's screen comes with the redesign (step 7).
   - **If the app is swiped away from recent apps:** today the AI stops, because the Flutter engine belongs to the screen. Keep the engine alive in the service (a cached `FlutterEngine` owned by the service), so listening, recording and upload go on until the user turns protection off.
+  - **Restart listening after a phone call (found 15-10-2026 in the validation session):** an incoming call took the microphone at 19:05:07, and listening never came back, although Sakshya returned to the screen. Listen for audio interruptions (call start and end, another app taking the microphone) and restart the recorder automatically; also check that the stream is alive (e.g. many exact-zero windows in a row) and restart it. Unit-test the restart; check it in step 9 by calling the phone during listening.
   - **Battery:** continuous listening drains battery. Measure the drain per hour on both phones and report it.
 - **Why after the AI fix:** today the model false-triggers about 100 times an hour of ordinary talking (experiment 1). Listening all day in the background would mean dozens of unwanted recordings and uploads per day.
 - **Done when:**
@@ -233,7 +234,7 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
 ### Step 8. Reachable gateway: laptop + tunnel now (8a), cloud later (8b)
 **Decided 15-10-2026** (step 6, question 2).
 
-**8a. Laptop + ngrok tunnel. Do first.**
+**8a. Laptop + ngrok tunnel. Done 16-10-2026.**
 - **What:**
   - **The tunnel:** an ngrok tunnel (free plan, one **fixed** address such as `xyz.ngrok-free.app`) in front of the gateway on the laptop. `GATEWAY_URL` in `.env` points at that address, so the phones reach the gateway over mobile data, with no shared Wi-Fi needed.
   - **A gateway password:** an API key the app sends with every request. The gateway has no login today; signatures prevent forgery, but anyone who can reach it can call it.
@@ -242,6 +243,15 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
   - a free ngrok account, with its free static domain claimed;
   - the authtoken saved in a git-ignored file. **Never paste it in the chat.**
 - **Done when:** the live Dart tests pass through the tunnel address, and a phone on mobile data (Wi-Fi off) anchors a clip.
+- **Progress 15-10-2026 (computer side done; waiting for the ngrok account):**
+  - **Gateway API key:** every route except `/health` needs the `X-Api-Key` header, compared in constant time. The key is in `fabric/gateway/api-key.txt` (or `GATEWAY_API_KEY`), and the gateway won't start without one (`GATEWAY_ALLOW_NO_KEY=1` for local-only tests). Checked: no key and wrong key → 401, right key → 200.
+  - **App:** `FabricLedgerService` sends the key (`GATEWAY_API_KEY` in `.env`) and `ngrok-skip-browser-warning` on every request. The key is bundled in the APK, so it keeps strangers out, but anyone who unpacks the APK can read it; signatures still stop forged records. Fine for the prototype.
+  - **Tests:** 165 pass (1 new: the key header). Live through the gateway with the key: `fabric_authority`, `authority_app`, `recovery` and `release_app` (with the portal and the 8901 IPFS stand-in) all pass.
+  - **ngrok:** installed (winget, updated to 3.39.11). `fabric/gateway/start-tunnel.sh` starts the tunnel to the domain in `fabric/gateway/tunnel.txt` (git-ignored).
+  - **Tunnel up (16-10-2026, 00:30):** the address is `https://grandly-riverside-showy.ngrok-free.dev` (the account's free static domain, in `fabric/gateway/tunnel.txt`; authtoken in ngrok's own config, never in the repo). `GATEWAY_URL` in `.env` points at it. Through the tunnel: `/health` OK, no key → 401, key → 200, and the live tests `fabric_authority`, `authority_app` (twice), `recovery` and `release_app` all pass.
+  - **Bug found and fixed on the way:** two requests from the same phone sent at the same moment collided on the ledger (read conflict, HTTP 502): a double registration, and a guardian sync started by the outbox while another was running. Over the tunnel's slower link this happened often. Now a second registration waits for the one in flight, and guardian syncs run one after another. Two new unit tests (each fails without its fix); 167 tests pass.
+  - **Done 16-10-2026, 00:34–00:36, on the Vivo with Wi-Fi off (Jio LTE):** the debug build with the tunnel address registered the phone (`POST /nodes`), recorded an SOS clip, uploaded the 23.9 MB ciphertext to Pinata and anchored it through the tunnel. `/verify` shows it in **block 255**, signed by the phone (node `f76c25edcccdcb81`), recorded 00:35:15, anchored 00:36:26; the Pinata copy is 23,911,303 bytes, the same as the file on the phone. Upload took about 70 s over mobile data.
+  - **Start order for a session:** Docker Desktop → `start-network.sh` (in WSL) → `node fabric/gateway/server.js` → `bash fabric/gateway/start-tunnel.sh` (→ the portal, for police steps).
 
 **8b. Cloud machine. An optional upgrade, around days 3–7 before submission.**
 - **What:**
