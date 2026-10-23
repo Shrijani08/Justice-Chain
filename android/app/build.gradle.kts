@@ -71,3 +71,8 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // ProtectionService: NotificationCompat, ServiceCompat.startForeground with a type.
+    implementation("androidx.core:core-ktx:1.13.1")
+}

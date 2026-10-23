@@ -1,12 +1,14 @@
 package com.example.justice_chain
 
 import android.content.ComponentName
+import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
@@ -19,8 +21,47 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * One engine for the whole process, kept when the screen closes, so the
+     * AI, recording and uploads in Dart go on after Sakshya is swiped away
+     * while ProtectionService holds the process. Reopening the app attaches
+     * to the same running engine instead of starting main() again.
+     */
+    override fun provideFlutterEngine(context: Context): FlutterEngine =
+        FlutterEngineCache.getInstance().get(ENGINE_ID)
+            ?: FlutterEngine(context.applicationContext).also { FlutterEngineCache.getInstance().put(ENGINE_ID, it) }
+
+    override fun shouldDestroyEngineWithHost(): Boolean = false
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // Background protection (ProtectionService). The application context,
+        // because the engine outlives this activity.
+        val app = applicationContext
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "in.sakshya/protection")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "start" -> {
+                            ProtectionService.start(app, call.argument<Boolean>("disguised") == true)
+                            result.success(true)
+                        }
+                        "stop" -> {
+                            ProtectionService.stop(app)
+                            result.success(true)
+                        }
+                        "setDisguised" -> {
+                            ProtectionService.setDisguised(call.argument<Boolean>("disguised") == true)
+                            result.success(true)
+                        }
+                        "isRunning" -> result.success(ProtectionService.running)
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    // E.g. ForegroundServiceStartNotAllowedException when asked from the background.
+                    result.error("protection_failed", e.toString(), null)
+                }
+            }
         // Disguise mode: which launcher face (AndroidManifest.xml) is shown.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "in.sakshya/disguise")
             .setMethodCallHandler { call, result ->
@@ -66,5 +107,6 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val SAKSHYA = "sakshya"
         const val CALCULATOR = "calculator"
+        const val ENGINE_ID = "sakshya_main"
     }
 }

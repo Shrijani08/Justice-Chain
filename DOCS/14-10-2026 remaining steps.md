@@ -196,6 +196,15 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
 - **When the final icon arrives:** adaptive icon (foreground, background, monochrome), round icon, and legacy PNG sizes, then check on the emulator. About 30 minutes.
 
 ### Step 6b. Background listening (foreground service). Do after the AI false-trigger fix; plan first, then code
+**Phase 1 done 23-10-2026 (service + kept engine), checked on the Vivo:**
+- **Code:** `ProtectionService.kt` (foreground service, type camera|microphone, partial wake lock, `START_NOT_STICKY`, `stopWithTask="false"`); `MainActivity` keeps one cached `FlutterEngine` for the process; `lib/core/protection_service.dart` (on by default, saved; "Background protection" switch in the home screen's Listening group until the redesign); notification permission requested; 6 unit tests in `test/protection_service_test.dart`.
+- **Screen off 3 min:** heartbeat every ~10 s with real microphone levels; an AI trigger with the screen off recorded 45 s with the camera plugin, sealed it, and listening restarted on its own.
+- **Swiped away + locked ~2 min:** same process, listening went on; reopening attached to the same engine (no restart).
+- **Notification:** normal "Sakshya is protecting you"; disguised "Calculator · New calculations? The numbers miss you.", calculator icon, hidden on the lock screen.
+  - Android always heads a notification with the app's real name and icon. **Decided: hide it in disguise mode.** An app-created switched-off channel is forced back on for a foreground service (`mOriginalImp=0`, `mImportance=2`), so the service moves to its own "Background" channel and **the user turns that channel off once** (long-press the notification). Then nothing shows and listening continues (checked: ~15 min, screen off). Phase 3 must guide this step when disguise is turned on.
+- **Open:** one stall at 20:09:43: after an AI recording in disguise while the screen was torn down, audio kept arriving natively but the Dart AI stopped. Not reproduced since; a debug-only state line now prints every 10 s. Phase 2 (native background recorder) and Phase 3 (dead-stream watchdog) cover this path.
+- **Next:** Phase 2, CameraX background recorder with audio fallback.
+
 **Found 14-10-2026 during AI experiment 2 on the Vivo:** when the phone is locked or the app isn't on screen, Android stops giving the app the microphone, so **automatic detection only works while Sakshya is open**. The SOS button and "112 =" are unaffected (they need the app open anyway).
 - **What:**
   - **A foreground service:** a small Kotlin service declared as type `microphone` (and `camera`), with the matching permissions in `AndroidManifest.xml` (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS`) and a notification channel. Android lets such a service keep running in the background as long as it shows a **permanent notification** (e.g. "Sakshya is protecting you").

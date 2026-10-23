@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'ai_service.dart';
 import 'evidence_vault_service.dart';
 import 'mesh_service.dart';
+import 'protection_service.dart';
 import '../logic/safety_signals.dart';
 
 class EmergencyController {
@@ -47,6 +48,9 @@ class EmergencyController {
         }
       },
     );
+    // Keeps listening after the screen locks or the app is swiped away.
+    // Started here because monitoring starts while the app is on screen.
+    await ProtectionService.startIfEnabled();
   }
 
   static Future<void> simulateAIDistressDetection() async {
@@ -151,6 +155,7 @@ class EmergencyController {
   static Future<void> shutdownMonitoring() async {
     _recordingTimeoutTimer?.cancel();
     _recordingTimeoutTimer = null;
+    await ProtectionService.stop();
     await _aiService.dispose();
   }
 }

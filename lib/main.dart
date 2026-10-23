@@ -4,6 +4,7 @@ import 'core/ai_service.dart';
 import 'core/identity_service.dart';
 import 'core/app_services.dart';
 import 'core/disguise_service.dart';
+import 'core/protection_service.dart';
 import 'presentation/design/app_theme.dart';
 import 'presentation/disguise_gate.dart';
 import 'presentation/home_screen.dart';
@@ -21,7 +22,8 @@ void main() async {
 
   await AppServices.init();
   await DisguiseService.init();
-  
+  await ProtectionService.init();
+
   // Check if the user is already registered before loading the UI
   bool isRegistered = false;
   try {

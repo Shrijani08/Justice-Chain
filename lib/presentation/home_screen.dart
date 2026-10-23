@@ -13,6 +13,7 @@ import '../core/emergency_controller.dart';
 import '../core/yamnet_detector.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/mesh_service.dart';
+import '../core/protection_service.dart';
 import '../logic/safety_signals.dart';
 import 'design/components.dart';
 import 'design/sentinel.dart';
@@ -85,6 +86,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
       Permission.bluetoothAdvertise,
       Permission.bluetoothConnect,
       Permission.nearbyWifiDevices,
+      Permission.notification, // background protection's notification
     ].request();
 
     // Listen for paired contacts in distress while the app is open, so
@@ -451,6 +453,21 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
                       child: ThresholdMeter(
                         value: currentAiConfidence,
                         threshold: YamnetDetector.threshold,
+                      ),
+                    ),
+                    // Until the redesign's settings screen.
+                    ValueListenableBuilder<bool>(
+                      valueListenable: ProtectionService.enabled,
+                      builder: (context, on, _) => SakRow(
+                        icon: Icons.lock_clock_rounded,
+                        iconColor: on ? c.success : c.inkSecondary,
+                        title: 'Background protection',
+                        subtitle: on
+                            ? 'Keeps listening when the phone is locked'
+                            : 'Listens only while Sakshya is open',
+                        chevron: false,
+                        trailing: Switch(value: on, onChanged: ProtectionService.setEnabled),
+                        onTap: () => ProtectionService.setEnabled(!on),
                       ),
                     ),
                   ],

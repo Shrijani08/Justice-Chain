@@ -78,6 +78,9 @@ class AIService {
 
   final YamnetDetector _yamnet = YamnetDetector();
   Interpreter? _interpreter; // the old distress model, capture mode only
+  int _debugWindowCount = 0;
+  int _debugChunkCount = 0;
+  Timer? _debugStateTimer;
   StreamSubscription<Uint8List>? _audioSubscription;
   DistressDetectedCallback? _onDistressDetected;
 
@@ -147,6 +150,16 @@ class AIService {
     }
 
     if (_isMonitoring || _isPausedForRecording) return;
+
+    // Debug builds: the AI's state every 10 s on its own timer, so it still
+    // prints if audio stops arriving (step 6b check).
+    if (kDebugMode) {
+      _debugStateTimer ??= Timer.periodic(const Duration(seconds: 10), (_) {
+        debugPrint('Sakshya AI state: chunks $_debugChunkCount, windows $_debugWindowCount, '
+            'monitoring $_isMonitoring, recording ${isRecording.value}, preprocessing $_isPreprocessing, '
+            'paused $_isPausedForRecording, triggering $_isTriggering');
+      });
+    }
 
     await initModel();
     if (!_isModelLoaded) {
@@ -232,6 +245,7 @@ class AIService {
   }
 
   void _handlePcmBytes(Uint8List bytes) {
+    _debugChunkCount++;
     if (bytes.isEmpty || !_isMonitoring || isRecording.value) return;
 
     final samples = _pcm16BytesToSamples(bytes);
@@ -289,6 +303,12 @@ class AIService {
     try {
       double sumSquares = samples.fold(0.0, (sum, val) => sum + (val * val));
       double rms = math.sqrt(sumSquares / samples.length);
+
+      // Debug builds: a logcat line every 10 windows, to check from a
+      // computer that listening goes on with the screen locked (step 6b).
+      if (kDebugMode && ++_debugWindowCount % 10 == 0) {
+        debugPrint('Sakshya AI heartbeat: window $_debugWindowCount, rms ${rms.toStringAsFixed(4)}');
+      }
 
       if (rms < 0.005) {
         aiStatus.value = 'AI listening: environment quiet';
