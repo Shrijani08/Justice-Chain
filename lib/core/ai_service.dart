@@ -73,6 +73,29 @@ class AIService {
   /// a new clip seconds after every stop. The SOS button is unaffected.
   static const Duration postRecordingCooldown = Duration(seconds: 30);
 
+  /// The microphone stream counts as dead, and is restarted, after this
+  /// long without audio, or after [deadStreamZeroWindows] windows of exact
+  /// digital silence in a row (a real room is never exactly 0). Found
+  /// 15-10-2026: a phone call took the microphone and listening never came
+  /// back.
+  static const Duration deadStreamSilence = Duration(seconds: 5);
+  static const int deadStreamZeroWindows = 15;
+
+  /// At most one restart this often, so a phone call doesn't loop restarts.
+  static const Duration deadStreamRestartGap = Duration(seconds: 30);
+
+  /// Whether the stream should be restarted ([deadStreamSilence],
+  /// [deadStreamZeroWindows], [deadStreamRestartGap]).
+  @visibleForTesting
+  static bool streamLooksDead({
+    required Duration sinceLastAudio,
+    required int zeroWindowsInARow,
+    required Duration? sinceLastRestart,
+  }) {
+    if (sinceLastRestart != null && sinceLastRestart < deadStreamRestartGap) return false;
+    return sinceLastAudio >= deadStreamSilence || zeroWindowsInARow >= deadStreamZeroWindows;
+  }
+
   final AudioRecorder _audioRecorder = AudioRecorder();
   final ListQueue<double> _rollingSamples = ListQueue<double>();
   final ListQueue<bool> _recentWindowPasses = ListQueue<bool>();
@@ -82,6 +105,11 @@ class AIService {
   int _debugWindowCount = 0;
   int _debugChunkCount = 0;
   Timer? _debugStateTimer;
+  Timer? _watchdogTimer;
+  DateTime _lastAudioAt = DateTime.now();
+  DateTime? _lastRestartAt;
+  int _zeroWindowsInARow = 0;
+  bool _isRestarting = false;
   StreamSubscription<Uint8List>? _audioSubscription;
   DistressDetectedCallback? _onDistressDetected;
 
@@ -188,6 +216,11 @@ class AIService {
         echoCancel: false,
         noiseSuppress: false,
         streamBufferSize: 2048,
+        // The default pauses the stream whenever another app takes audio
+        // focus (a call, a video, a voice note) and never resumes it; it also
+        // paused the user's music. During a call Android just silences the
+        // microphone, and it comes back by itself afterwards.
+        audioInterruption: AudioInterruptionMode.none,
       ),
     );
 
@@ -198,6 +231,9 @@ class AIService {
     // triggering the next one.
     _recentWindowPasses.clear();
     _isMonitoring = true;
+    _lastAudioAt = DateTime.now();
+    _zeroWindowsInARow = 0;
+    _watchdogTimer ??= Timer.periodic(const Duration(seconds: 1), (_) => _checkStream());
     aiActive.value = true;
     aiStatus.value = 'AI listening at 16 kHz';
 
@@ -235,6 +271,31 @@ class AIService {
     aiStatus.value = _isModelLoaded ? status : aiStatus.value;
   }
 
+  /// Restarts the microphone stream if it has gone dead ([streamLooksDead]).
+  Future<void> _checkStream() async {
+    if (!_isMonitoring || _isPausedForRecording || _isRestarting || isRecording.value) return;
+    final now = DateTime.now();
+    if (!streamLooksDead(
+      sinceLastAudio: now.difference(_lastAudioAt),
+      zeroWindowsInARow: _zeroWindowsInARow,
+      sinceLastRestart: _lastRestartAt == null ? null : now.difference(_lastRestartAt!),
+    )) {
+      return;
+    }
+    _isRestarting = true;
+    _lastRestartAt = now;
+    developer.log('Microphone stream looks dead; restarting it.', name: 'JusticeChain.AI');
+    if (kDebugMode) debugPrint('Sakshya AI: microphone stream looks dead; restarting it');
+    try {
+      await stopMonitoring(status: 'AI restarting the microphone');
+      await startMonitoring();
+    } catch (e) {
+      developer.log('Microphone restart failed: $e', name: 'JusticeChain.AI');
+    } finally {
+      _isRestarting = false;
+    }
+  }
+
   Future<void> pauseForRecording() async {
     if (_isPausedForRecording) return;
     _isPausedForRecording = true;
@@ -251,6 +312,7 @@ class AIService {
   void _handlePcmBytes(Uint8List bytes) {
     _debugChunkCount++;
     if (bytes.isEmpty || !_isMonitoring || isRecording.value) return;
+    _lastAudioAt = DateTime.now();
 
     final samples = _pcm16BytesToSamples(bytes);
 
@@ -307,6 +369,7 @@ class AIService {
     try {
       double sumSquares = samples.fold(0.0, (sum, val) => sum + (val * val));
       double rms = math.sqrt(sumSquares / samples.length);
+      _zeroWindowsInARow = rms == 0 ? _zeroWindowsInARow + 1 : 0;
 
       // Debug builds: a logcat line every 10 windows, to check from a
       // computer that listening goes on with the screen locked (step 6b).
@@ -523,6 +586,10 @@ class AIService {
   }
 
   Future<void> dispose() async {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+    _debugStateTimer?.cancel();
+    _debugStateTimer = null;
     await stopMonitoring();
     await _audioRecorder.dispose();
     _yamnet.close();

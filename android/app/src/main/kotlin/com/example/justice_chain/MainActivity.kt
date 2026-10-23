@@ -55,6 +55,12 @@ class MainActivity : FlutterActivity() {
                             result.success(true)
                         }
                         "isRunning" -> result.success(ProtectionService.running)
+                        "disguisedNotificationVisible" ->
+                            result.success(ProtectionService.disguisedNotificationVisible(app))
+                        "openDisguisedNotificationSettings" -> {
+                            ProtectionService.openDisguisedNotificationSettings(app)
+                            result.success(true)
+                        }
                         // Answers when the clip is finished (or stopped): {path, kind} or {error}.
                         "record" -> BackgroundRecorder.start(app, call.argument<Int>("seconds") ?: 45) {
                             result.success(it)

@@ -118,6 +118,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
     if (hasMicrophonePermission) {
       logger.i("Microphone Permission Granted.");
       await EmergencyController.startBackgroundMonitoring();
+      unawaited(_askBatteryExemptionOnce());
     }
 
     _cameraPermitted = hasCameraPermission && hasMicrophonePermission;
@@ -211,6 +212,43 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) => unawaited(_syncCamera());
+
+  /// Turns disguise on or off. Turning it on while listening also asks the
+  /// user to turn off the disguised notification's channel once: Android
+  /// heads every notification with the app's real name.
+  Future<void> _setDisguise(bool on) async {
+    await DisguiseService.setEnabled(on);
+    if (!on || !ProtectionService.enabled.value || !ProtectionService.listenWhileDisguised.value) return;
+    if (!await ProtectionService.disguisedNotificationVisible() || !mounted) return;
+    final openSettings = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hide the notification'),
+        content: const Text(
+          "Android always shows the app's real name on its notification. "
+          'On the next screen, turn off "Background" so nothing gives Sakshya away. '
+          'Listening keeps working.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Open settings')),
+        ],
+      ),
+    );
+    if (openSettings == true) await ProtectionService.openDisguisedNotificationSettings();
+  }
+
+  /// Vivo's and Samsung's battery savers stop background apps, so this asks
+  /// Android once to leave Sakshya alone (step 6b). The makers' own settings
+  /// pages come with the redesign's guide.
+  Future<void> _askBatteryExemptionOnce() async {
+    const askedKey = 'battery_exemption_asked';
+    final box = Hive.box('vault_box');
+    if (!ProtectionService.enabled.value || box.get(askedKey) == true) return;
+    if (await Permission.ignoreBatteryOptimizations.isGranted) return;
+    await box.put(askedKey, true);
+    await Permission.ignoreBatteryOptimizations.request();
+  }
 
   /// The home screen holds the camera only while the app is on screen, so
   /// the background recorder can use it otherwise (step 6b). A recording
@@ -523,6 +561,20 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
                         onTap: () => ProtectionService.setEnabled(!on),
                       ),
                     ),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: ProtectionService.listenWhileDisguised,
+                      builder: (context, on, _) => SakRow(
+                        icon: Icons.calculate_rounded,
+                        iconColor: on ? c.success : c.inkSecondary,
+                        title: 'Keep listening while disguised',
+                        subtitle: on
+                            ? 'Android shows a microphone dot under the calculator'
+                            : 'Under the calculator only "112 =" records',
+                        chevron: false,
+                        trailing: Switch(value: on, onChanged: ProtectionService.setListenWhileDisguised),
+                        onTap: () => ProtectionService.setListenWhileDisguised(!on),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -567,7 +619,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
                             iconColor: c.inkSecondary,
                             title: disguised ? 'Stop Calculator Disguise' : 'Disguise as Calculator',
                             chevron: false,
-                            onTap: () => DisguiseService.setEnabled(!disguised),
+                            onTap: () => _setDisguise(!disguised),
                           ),
                         ),
                       ],

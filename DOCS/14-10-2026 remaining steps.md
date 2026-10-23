@@ -214,7 +214,16 @@ These were left open in earlier docs. Each needs a yes or no before the demo:
   - listening never resumed after a recording made while swiped away: the `record` plugin's `hasPermission()` answers false with no screen attached. Now `permission_handler` checks it;
   - sealing ran on the main isolate, so the AI was deaf for 40 s after each recording, and 3.5 min when swiped away (the Vivo throttles it). Hashing and AES-GCM now run with `Isolate.run`; the AI keeps listening and the seal took ~43 s swiped away.
 - **Not checked yet:** upload of these clips (the gateway wasn't running; they wait in the outbox) and playback of an audio-only clip in My Evidence. Both go into step 9.
-- **Next:** Phase 3 (the "Keep listening while disguised" switch, guiding the one-time notification switch-off, restart after a phone call / dead stream, battery-optimisation exemption).
+
+**Phase 3 done 23-10-2026:**
+- **Root cause of the 15-10 phone-call bug (and the 20:09 stall):** the `record` plugin's default `AudioInterruptionMode.pause` paused the stream whenever another app took audio focus (a call, a video, a Settings sound) and never resumed it. It also took media focus, which paused the user's music. Now `AudioInterruptionMode.none`.
+- **Dead-stream watchdog** (`AIService.streamLooksDead`): restart if no audio for 5 s, or 15 windows of exact digital silence, at most every 30 s.
+  - Checked on the Vivo: a 1.5 min incoming call, phone locked. Audio kept flowing (silenced during the call); the watchdog restarted 3 times, 30 s apart; listening went on normally after the call.
+- **"Keep listening while disguised"** (`ProtectionService.listenWhileDisguised`, on by default, saved; temporary switch in the Listening group). Off and disguised: the service and the AI stop (no microphone dot); undisguising or switching it back on restarts them. Applied by `EmergencyController`.
+- **Disguise guide:** turning disguise on while listening checks whether the disguised notification's channel is still on, explains why, and opens its Android settings page. The quiet channel is now created normally (an app-created "off" channel was forced back on anyway).
+- **Battery:** `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`; the system prompt is asked once after monitoring starts. The makers' own settings pages (Vivo "high background power use", Samsung "Never sleeping apps") come with the redesign's guide.
+- **Tests:** 8 in `test/listening_rule_test.dart`; full suite 189 pass.
+- **Left for step 9:** battery drain per hour on both phones; the Samsung; upload and playback of the background clips.
 
 **Found 14-10-2026 during AI experiment 2 on the Vivo:** when the phone is locked or the app isn't on screen, Android stops giving the app the microphone, so **automatic detection only works while Sakshya is open**. The SOS button and "112 =" are unaffected (they need the app open anyway).
 - **What:**

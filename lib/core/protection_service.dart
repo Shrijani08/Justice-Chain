@@ -29,16 +29,24 @@ class ProtectionService {
 
   static const _channel = MethodChannel('in.sakshya/protection');
   static const _enabledKey = 'background_protection';
+  static const _listenWhileDisguisedKey = 'listen_while_disguised';
 
   static Box get _box => Hive.box('vault_box');
 
   /// The user's choice; the home screen's switch listens to it.
   static final ValueNotifier<bool> enabled = ValueNotifier<bool>(true);
 
+  /// "Keep listening while disguised" (decided 15-10-2026, on by default).
+  /// Off: nothing listens under the calculator, so Android shows no
+  /// microphone dot; only "112 =" or the SOS button records. The
+  /// EmergencyController applies it.
+  static final ValueNotifier<bool> listenWhileDisguised = ValueNotifier<bool>(true);
+
   /// Reads the saved setting and keeps the notification's wording in step
   /// with disguise mode.
   static Future<void> init() async {
     enabled.value = _box.get(_enabledKey, defaultValue: true) == true;
+    listenWhileDisguised.value = _box.get(_listenWhileDisguisedKey, defaultValue: true) == true;
     DisguiseService.enabled
       ..removeListener(_onDisguiseChanged) // safe to call init again
       ..addListener(_onDisguiseChanged);
@@ -53,6 +61,27 @@ class ProtectionService {
       await stop();
     }
   }
+
+  static Future<void> setListenWhileDisguised(bool on) async {
+    await _box.put(_listenWhileDisguisedKey, on);
+    listenWhileDisguised.value = on;
+  }
+
+  /// Whether the disguised notification would still show. Android heads
+  /// every notification with the app's real name, so the user turns its
+  /// channel off once ([openDisguisedNotificationSettings]).
+  static Future<bool> disguisedNotificationVisible() async {
+    try {
+      return await _channel.invokeMethod<bool>('disguisedNotificationVisible') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Opens Android's settings page for the disguised notification's channel.
+  static Future<bool> openDisguisedNotificationSettings() => _invoke('openDisguisedNotificationSettings');
 
   /// Starts the service if protection is on. Call it while the app is on
   /// screen; a start from the background is refused by Android.

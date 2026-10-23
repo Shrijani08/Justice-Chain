@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 
 import 'ai_service.dart';
+import 'disguise_service.dart';
 import 'evidence_vault_service.dart';
 import 'mesh_service.dart';
 import 'protection_service.dart';
@@ -24,44 +25,69 @@ class EmergencyController {
 
   /// Bootstraps localized AI screening routines.
   static Future<void> startBackgroundMonitoring() async {
-    await _aiService.startMonitoring(
-      onDistressDetected: (AIDistressEvent event) async {
-        final confidencePercent = (event.confidence * 100).toStringAsFixed(0);
+    _monitoringWanted = true;
+    if (!_listeningRuleWired) {
+      _listeningRuleWired = true;
+      DisguiseService.enabled.addListener(_applyListeningRule);
+      ProtectionService.listenWhileDisguised.addListener(_applyListeningRule);
+    }
+    await _applyListeningRule();
+  }
 
-        // Update operational AI signals instantly for the UI layout
-        aiPrediction.value = event.label;
-        aiConfidence.value = event.confidence;
-        aiStatus.value = "AI Monitoring: ${event.label} ($confidencePercent%)";
+  static bool _monitoringWanted = false;
+  static bool _listeningRuleWired = false;
 
-        // CRITICAL: Single Point of Entry Guard
-        // If we are already recording, ignore incoming duplicate triggers
-        if (isRecording.value ||
-            (cameraController != null &&
-                cameraController!.value.isRecordingVideo)) {
-          return;
-        }
+  /// The user's "Keep listening while disguised" switch: with it off,
+  /// nothing listens while the calculator disguise is on (no microphone
+  /// dot); only "112 =" or the SOS button records then.
+  static bool get listeningAllowed =>
+      !(DisguiseService.enabled.value && !ProtectionService.listenWhileDisguised.value);
 
-        if (_backgroundRecording) return;
+  static Future<void> _applyListeningRule() async {
+    if (!_monitoringWanted) return;
+    if (listeningAllowed) {
+      await _aiService.startMonitoring(onDistressDetected: _handleDistress);
+      // Keeps listening after the screen locks or the app is swiped away.
+      // Started here because monitoring starts while the app is on screen.
+      await ProtectionService.startIfEnabled();
+    } else if (!isRecording.value) {
+      await ProtectionService.stop();
+      await _aiService.stopMonitoring(status: 'AI paused while disguised');
+    }
+  }
 
-        if (event.label.toLowerCase() == 'distress') {
-          developer.log(
-            '🔥 AI Brain verified distress status ($confidencePercent%). Firing reactive safety signal.',
-            name: 'JusticeChain.Controller',
-          );
-          if (_holdsCamera) {
-            // The app is on screen: the home screen records with its camera.
-            aiDistressDetected.value = true;
-          } else {
-            // Locked, in the background or swiped away: the home screen has
-            // let the camera go, so record natively.
-            unawaited(startBackgroundRecording());
-          }
-        }
-      },
-    );
-    // Keeps listening after the screen locks or the app is swiped away.
-    // Started here because monitoring starts while the app is on screen.
-    await ProtectionService.startIfEnabled();
+  static Future<void> _handleDistress(AIDistressEvent event) async {
+    final confidencePercent = (event.confidence * 100).toStringAsFixed(0);
+
+    // Update operational AI signals instantly for the UI layout
+    aiPrediction.value = event.label;
+    aiConfidence.value = event.confidence;
+    aiStatus.value = "AI Monitoring: ${event.label} ($confidencePercent%)";
+
+    // CRITICAL: Single Point of Entry Guard
+    // If we are already recording, ignore incoming duplicate triggers
+    if (isRecording.value ||
+        (cameraController != null &&
+            cameraController!.value.isRecordingVideo)) {
+      return;
+    }
+
+    if (_backgroundRecording) return;
+
+    if (event.label.toLowerCase() == 'distress') {
+      developer.log(
+        '🔥 AI Brain verified distress status ($confidencePercent%). Firing reactive safety signal.',
+        name: 'JusticeChain.Controller',
+      );
+      if (_holdsCamera) {
+        // The app is on screen: the home screen records with its camera.
+        aiDistressDetected.value = true;
+      } else {
+        // Locked, in the background or swiped away: the home screen has
+        // let the camera go, so record natively.
+        unawaited(startBackgroundRecording());
+      }
+    }
   }
 
   static bool get _holdsCamera =>
@@ -217,6 +243,7 @@ class EmergencyController {
   }
 
   static Future<void> shutdownMonitoring() async {
+    _monitoringWanted = false;
     _recordingTimeoutTimer?.cancel();
     _recordingTimeoutTimer = null;
     await ProtectionService.stop();

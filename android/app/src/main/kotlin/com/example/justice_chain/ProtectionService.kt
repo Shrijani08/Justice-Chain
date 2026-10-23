@@ -13,6 +13,8 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -54,9 +56,11 @@ class ProtectionService : Service() {
 
     /**
      * Android heads every notification with the app's real name and icon,
-     * which an app can't change. So in disguise mode the service moves to a
-     * channel created switched off: nothing shows in the shade, and the
-     * service keeps running (Android 13+). The normal notification is removed.
+     * which an app can't change. So in disguise mode the service moves to its
+     * own channel, which the user turns off once (Android forces an
+     * app-created "off" channel back on for a foreground service). Then
+     * nothing shows in the shade and the service keeps running (Android 13+).
+     * The normal notification is removed.
      */
     private fun applyDisguise(disguised: Boolean) {
         val (show, hide) = if (disguised) QUIET_NOTIFICATION_ID to NOTIFICATION_ID else NOTIFICATION_ID to QUIET_NOTIFICATION_ID
@@ -112,26 +116,50 @@ class ProtectionService : Service() {
             instance?.applyDisguise(disguised)
         }
 
+        /** False once the user has turned the disguised notification's channel off. */
+        fun disguisedNotificationVisible(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+            createChannels(context)
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (!manager.areNotificationsEnabled()) return false
+            return manager.getNotificationChannel(QUIET_CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
+        }
+
+        /** Android's settings page for that channel, where the user turns it off. */
+        fun openDisguisedNotificationSettings(context: Context) {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                createChannels(context)
+                Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, QUIET_CHANNEL_ID)
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+            }
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+
+        private fun createChannels(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // Neutral names: they show in the app's notification settings in disguise mode too.
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Running in background", NotificationManager.IMPORTANCE_LOW)
+                    .apply { setShowBadge(false) })
+            manager.createNotificationChannel(
+                NotificationChannel(QUIET_CHANNEL_ID, "Background", NotificationManager.IMPORTANCE_LOW)
+                    .apply { setShowBadge(false) })
+        }
+
         private fun granted(context: Context, permission: String) =
             ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
         /**
-         * Normal mode says what it is. Disguise mode goes to the switched-off
-         * channel; should someone switch it on, it still reads like a
+         * Normal mode says what it is. Disguise mode goes to its own channel
+         * (turned off by the user); while it shows, it reads like a
          * calculator's reminder and stays off the lock screen.
          */
         private fun buildNotification(context: Context, disguised: Boolean): Notification {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                // Neutral names: they show in the app's notification settings in disguise mode too.
-                manager.createNotificationChannel(
-                    NotificationChannel(CHANNEL_ID, "Running in background", NotificationManager.IMPORTANCE_LOW)
-                        .apply { setShowBadge(false) })
-                // Created switched off; Android keeps a channel's importance once created.
-                manager.createNotificationChannel(
-                    NotificationChannel(QUIET_CHANNEL_ID, "Background", NotificationManager.IMPORTANCE_NONE)
-                        .apply { setShowBadge(false) })
-            }
+            createChannels(context)
             val open = PendingIntent.getActivity(
                 context, 0,
                 Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
