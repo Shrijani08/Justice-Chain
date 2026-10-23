@@ -1,0 +1,276 @@
+% =====================================================================
+% Review paper: blockchain-based digital evidence integrity and
+% automated evidence capture -- structured review and gap analysis.
+% IEEE conference format (IEEEtran), A4, 10 pt, two columns.
+% Compile with pdflatex, TWICE (cross-references need two passes).
+% References are inline (thebibliography); no BibTeX step is needed.
+% =====================================================================
+\documentclass[conference,a4paper,10pt]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{pifont}
+\usepackage{enumitem}
+\usepackage{url}
+\usepackage{balance}
+\usepackage[hidelinks]{hyperref}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125em X}}
+
+% ---- symbols used in the capability matrix (Table II) ---------------
+\newcommand{\tick}{\ding{51}}
+\newcommand{\cross}{\ding{55}}
+\newcommand{\semi}{$\sim$}
+
+% ---- fixed-width, left / centred table columns ----------------------
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+\setlist[itemize]{leftmargin=*,itemsep=1pt,topsep=2pt}
+\setlist[enumerate]{leftmargin=*,itemsep=1pt,topsep=2pt}
+
+\begin{document}
+
+\title{Blockchain-Based Digital Evidence Integrity and Automated Evidence Capture: A Structured Review and Gap Analysis}
+
+\author{
+\IEEEauthorblockN{Sara Khurshida\IEEEauthorrefmark{1}, Shrijani Bhat\IEEEauthorrefmark{1}, Siri R G\IEEEauthorrefmark{1}, Suhani S Patil\IEEEauthorrefmark{1}}
+\IEEEauthorblockA{\IEEEauthorrefmark{1}Department of Information Science and Engineering\\
+B.M.S. College of Engineering (Autonomous Institute, Affiliated to VTU), Bengaluru, India\\
+USNs: 1BM23IS219, 1BM23IS242, 1BM23IS244, 1BM23IS257}
+\and
+\IEEEauthorblockN{Guide: Dr. Anitha H M}
+\IEEEauthorblockA{Associate Professor\\
+Department of Information Science and Engineering\\
+B.M.S. College of Engineering, Bengaluru, India}
+}
+
+\maketitle
+
+% =====================================================================
+\begin{abstract}
+Digital audio and video increasingly decide criminal cases, yet their evidential value depends on two things that existing systems rarely deliver together: the evidence must exist at all, and it must be demonstrably unaltered since capture. Research on blockchain-based chain of custody has made the second property verifiable for evidence that has already been collected, but it has paid little attention to the first. This paper presents a structured review of 20 studies published between 2018 and 2026 on blockchain evidence management, decentralised storage, privacy-preserving verification and automated distress detection. The studies are organised into five themes and compared in two tables. From the comparison we derive seven research gaps. The most important is that none of the reviewed work couples autonomous, on-device evidence capture with cryptographic custody that survives loss of connectivity. We also summarise the legal context for electronic evidence in India and set out an agenda for future research.
+\end{abstract}
+
+\begin{IEEEkeywords}
+digital evidence, chain of custody, blockchain, decentralised storage, IPFS, privacy-preserving verification, distress detection, evidence admissibility, literature review
+\end{IEEEkeywords}
+
+% =====================================================================
+\section{Introduction}
+Courts treat digital recordings as persuasive but fragile. A recording can be challenged on provenance (who captured it, and when), integrity (has it been edited), and continuity (who held it in between). Conventional chain-of-custody records are paper forms or database rows controlled by the institution that holds the evidence, so anyone with administrative access can alter them without leaving a trace \cite{bonomi,ahmad}. Research since 2018 has answered this with tamper-evident, timestamped custody ledgers built on blockchains \cite{bonomi,sli,tian,ahmad,jeong,mli}.
+
+Two problems remain open, and both are sharpest in personal-safety scenarios such as assault, harassment or abduction.
+
+\textbf{The capture problem.} A ledger can prove that a file has not changed since it was registered. It cannot create a file that was never recorded. A person who is frightened, restrained or injured cannot be relied upon to open an application and start recording. Existing blockchain evidence systems assume that capture has already happened, through submission by an investigator or an authorised party.
+
+\textbf{The connectivity problem.} Anchoring, uploading and verification all assume a working network at the moment of capture. Emergencies happen in places with poor connectivity, and an attacker may deliberately destroy or seize the recording device.
+
+On the other side of the literature, work on automated scream and distress detection aims at recognising emergencies from audio and raising alerts \cite{bhad}. That work is concerned with detection and notification, not with producing tamper-evident evidence.
+
+This paper sits at the intersection of these two bodies of work. Its contributions are:
+\begin{itemize}
+  \item[\textbf{C1.}] A structured, theme-based review of 20 studies with two comparison tables (Section~\ref{sec:review}).
+  \item[\textbf{C2.}] A gap analysis that identifies seven concrete research gaps and traces each to the literature (Section~\ref{sec:gaps}).
+  \item[\textbf{C3.}] A summary of the legal context for electronic evidence in India (Section~\ref{sec:legal}) and a research agenda (Section~\ref{sec:future}).
+\end{itemize}
+
+The remainder of the paper is organised as follows. Section~\ref{sec:method} describes the review method, Section~\ref{sec:background} the technical background, Section~\ref{sec:review} the thematic review, Section~\ref{sec:gaps} the gaps, Section~\ref{sec:legal} the legal context, Section~\ref{sec:future} open challenges and future research, and Section~\ref{sec:conclusion} the conclusion.
+
+% =====================================================================
+\section{Review Methodology}\label{sec:method}
+The review follows a structured narrative approach rather than a formal PRISMA protocol. Studies were searched on Google Scholar and on publisher platforms (IEEE Xplore, ScienceDirect, ACM Digital Library, MDPI and Springer), using combinations of the terms blockchain, chain of custody, digital evidence, IPFS, zero-knowledge, scream detection and emergency alert.
+
+\textbf{Inclusion criteria.} A study was retained if it (i)~proposed, implemented or systematically reviewed a blockchain-based evidence or custody mechanism, or (ii)~addressed an enabling technology that such systems depend on directly (decentralised storage, privacy-preserving verification, or audio-based distress detection), and (iii)~reported a method, an architecture or measurable results.
+
+\textbf{Reference verification.} Every study in the corpus was checked against its publisher, repository or index record for title, authors, venue and year. Numerical results are quoted only where they appear in the study's abstract or listing, and are reported exactly as the original authors state them.
+
+\textbf{Corpus profile.} The corpus contains 20 studies: five systematic reviews or surveys \cite{akinbi,batista,onyeashie,lavin,bhad} and fifteen design, implementation or evaluation papers. Eighteen of the twenty concern blockchain evidence or custody, one concerns zero-knowledge privacy \cite{lavin}, and one concerns audio-based distress detection \cite{bhad}. Nine were published in 2024 or later and five in 2025--2026, so the corpus reflects current practice while keeping the foundational 2018--2021 work.
+
+\textbf{Analysis.} Each study was coded on the following attributes: blockchain platform, where evidence content is stored, access-control or privacy mechanism, presence of AI, offline behaviour, trigger for capture, and reported results. Codes were then clustered into themes. Results were produced under different datasets, hardware and threat models and are not directly comparable across studies. They are given as indicative evidence of feasibility only.
+
+\textbf{Limitations of the review.} The corpus is purposive rather than exhaustive, grey literature and patents were not searched, and the studies were assessed from their abstracts and reported results rather than by re-running their code.
+
+% =====================================================================
+\section{Technical Background}\label{sec:background}
+\textbf{Cryptographic fingerprints.} SHA-256 \cite{nist180} maps a file of any length to a 256-bit digest. Finding two inputs with the same digest is believed to cost about $2^{128}$ operations, and finding a second input for a given digest about $2^{256}$, so a matching digest is strong evidence that a file is unchanged. Merkle trees aggregate many digests into one root so that a single on-chain entry can vouch for many files \cite{jaquet,rani}.
+
+\textbf{Content addressing.} IPFS \cite{benet} identifies content by a Content Identifier (CID) derived from the hash of the content itself. Any change to the bytes changes the CID, so the address doubles as an integrity check on whatever was stored. Because IPFS is a public network, anything uploaded must be assumed readable by anyone who learns the CID, so confidentiality has to come from encryption before upload \cite{saif}, for example with AES \cite{nist197}.
+
+\textbf{Smart-contract ledgers.} A blockchain with smart contracts provides an append-only, timestamped log whose entries cannot be changed by any single operator. Permissioned platforms such as Hyperledger Fabric and Sawtooth trade openness for control \cite{jeong,khan}. Public platforms offer open verifiability, and their cost differs widely between networks \cite{ratul}.
+
+\textbf{Audio event classification.} Convolutional networks applied to spectral representations of audio are practical for environmental sound events \cite{hershey,salamon}. Scream detection pipelines typically combine noise-robust pre-processing, spectral features such as MFCCs, and classifiers such as SVM, MLP and CNN models \cite{bhad}.
+
+% =====================================================================
+\section{Thematic Literature Review}\label{sec:review}
+
+\subsection{Blockchain chain-of-custody frameworks}
+The largest cluster of work replaces paper or database custody logs with ledgers. Bonomi et al.\ \cite{bonomi} (B-CoC) proposed a permissioned-blockchain chain of custody that keeps evidence files off-chain and records custody events and hashes on-chain, with a prototype on Ethereum. Li et al.\ \cite{sli} presented the IoT forensic chain (IoTFC) for proof of existence and privacy preservation, and Tian et al.\ \cite{tian} proposed Block-DEF, a blockchain-based digital evidence framework. Ahmad et al.\ \cite{ahmad} used a private Ethereum chain that records every transfer from the moment of seizure, with smart locks so that only authorised parties hold the unlocking keys. Jeong et al.\ \cite{jeong} built an evidence management model on Hyperledger Fabric, and Khan et al.\ \cite{khan} proposed MF-Ledger, a Hyperledger Sawtooth architecture for multimedia evidence. Brotsis et al.\ \cite{brotsis} combined a private evidence database with a permissioned blockchain for smart-home forensics, and Rani et al.\ \cite{rani} described a smart-contract system with Merkle roots, role-based access control and version tracking. Aigboduwa \cite{aigboduwa} proposed BEEIF for web-server forensic artefacts on Hyperledger Fabric and reports about 2.3\% CPU utilisation in a simulated testbed.
+
+\emph{Observation.} Every framework in this cluster begins with evidence that an authorised human has already collected. Capture is out of scope.
+
+\subsection{Off-chain storage and the on-chain/off-chain split}
+Storing media on-chain is prohibitively expensive, so the dominant pattern keeps files off-chain and anchors only hashes and metadata. Kim et al.\ \cite{kim} observed that storing large video files directly on a blockchain degrades performance and proposed a two-level design that separates frequently changing data from unchanging data such as video. Saif et al.\ \cite{saif} combine blockchain, IPFS and encryption to provide immutability, traceability, availability and privacy together, and discuss the key-management and privacy challenges that the pattern creates. Ratul et al.\ \cite{ratul} describe a consortium blockchain for judicial stakeholders with off-chain evidence storage, deployed on test networks, and report that operating cost on Polygon was 99.96\% lower than on Ethereum.
+
+\emph{Observation.} The off-chain-plus-anchor pattern is mature. What is missing is any treatment of the upload step failing because the device is offline, damaged or confiscated.
+
+\subsection{Access control, privacy and identity}
+Li et al.\ \cite{mli} (LEChain) supervise the whole evidence flow from collection to jury voting in court. They use short randomizable signatures to authenticate witnesses anonymously and ciphertext-policy attribute-based encryption for fine-grained access, with a consortium blockchain recording the transactions. Jaquet-Chiffelle et al.\ \cite{jaquet} (Horodocs) timestamp evidence by grouping file hashes into a temporary Merkle tree whose root alone is recorded on Ethereum, giving each submitter a receipt that can recompute the root. Park and Jeong \cite{park} (B-DEMS) cover the lifecycle from registration to court-authorised destruction, encode legal requirements for several jurisdictions, and use multi-party authorisation and conditional decryption. They report a maximum of 10,890~TPS and no successful attack in 300 adversarial attempts. Lavin et al.\ \cite{lavin} survey zero-knowledge proofs, mainly zkSNARKs, and compare their proof sizes, prover and verifier times and setup assumptions.
+
+\emph{Observation.} Identity and privacy mechanisms are designed around institutional actors such as investigators, courts and jurors. A private individual acting as the evidence originator, who may be a victim, is not modelled.
+
+\subsection{Automated distress detection and capture}
+Bhad and Vyawahare \cite{bhad} review scream detection and describe a conceptual system that detects screams in live audio, separates them from background noise, and sends alerts with location data to responders. Their review reports no accuracy figures. The enabling classifiers come from general audio research, where convolutional networks have been shown to work well on large-scale and environmental sound classification \cite{hershey,salamon}.
+
+\emph{Observation.} Detection and custody have been built in isolation. Detectors stop at the alert, and custody systems start after collection.
+
+\subsection{Surveys and the legal dimension}
+Akinbi et al.\ \cite{akinbi} reviewed blockchain-based IoT forensic investigation process models and found few prototypes demonstrating practical implementation. Batista et al.\ \cite{batista} analysed 26 resources on blockchain chain of custody and found very few studies for physical evidence. Onyeashie et al.\ \cite{onyeashie} combined a bibliometric analysis with a systematic review of 58 articles on blockchain-based chain of custody for digital evidence and discuss the challenges of implementing it. A recurring caveat across this literature is that a ledger guarantees integrity after registration but says nothing about whether the registered data was genuine or complete. This is the so-called garbage-in problem, and it motivates trusted, automated capture.
+
+% ---------------------------- Table I --------------------------------
+\begin{table*}[!t]
+\caption{Comparison of the 20 Reviewed Studies (Results as Reported by the Authors)}
+\label{tab:comparison}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{L{2.6cm} L{2.9cm} L{6.0cm} L{5.0cm}}
+\toprule
+\textbf{Study} & \textbf{Focus} & \textbf{Technique} & \textbf{Reported outcome}\\
+\midrule
+\cite{bonomi} Bonomi 2018 & Chain of custody & Permissioned blockchain; files off-chain, hashes and events on-chain & Ethereum prototype evaluated for performance\\
+\cite{sli} Li 2019 & IoT forensics & IoT forensic chain (IoTFC) & Proof of existence; privacy preservation\\
+\cite{tian} Tian 2019 & Evidence framework & Block-DEF, blockchain-based & Digital evidence framework\\
+\cite{brotsis} Brotsis 2019 & Smart-home forensics & Private evidence database; permissioned chain; smart contracts & Integrity, authentication, non-repudiation\\
+\cite{ahmad} Ahmad 2020 & Chain of custody & Private Ethereum; smart locks; metadata on-chain & Custody records from seizure onwards\\
+\cite{jeong} Jeong 2020 & Evidence management & Hyperledger Fabric model & Access limited to authorised participants\\
+\cite{mli} Li 2021 & Lawful evidence management & Randomizable signatures; attribute-based encryption; consortium chain & Prototype on local Ethereum test network\\
+\cite{khan} Khan 2021 & Multimedia evidence & Hyperledger Sawtooth; smart contracts; private ledger & Permanent, immutable custody record\\
+\cite{kim} Kim 2021 & Video evidence storage & Two-level (hot/cold) blockchain & Storage and query performance measured\\
+\cite{akinbi} Akinbi 2022 & Review, IoT forensics & Systematic literature review & Few prototypes of practical implementation\\
+\cite{batista} Batista 2023 & Review, physical evidence & 26 resources analysed & Very few studies on physical evidence\\
+\cite{saif} Saif 2024 & Storage & IPFS + blockchain + encryption & Immutability, traceability, availability, privacy\\
+\cite{ratul} Ratul 2024 & Judicial evidence & Consortium chain; off-chain storage; Polygon and Ethereum test networks & Polygon cost 99.96\% lower than Ethereum\\
+\cite{onyeashie} Onyeashie 2024 & Review, digital evidence & Bibliometric analysis and systematic review & 58 articles reviewed\\
+\cite{lavin} Lavin 2024 & Review, zero-knowledge proofs & Survey of zkSNARK applications; taxonomy and comparison criteria & Comparative tables; future directions\\
+\cite{jaquet} Jaquet-Chiffelle 2025 & Timestamping & Merkle tree of hashes; root on Ethereum; receipts & Privacy by design; backdating resistance\\
+\cite{aigboduwa} Aigboduwa 2025 & Web-server forensics & SHA-3-512; Hyperledger Fabric; off-chain evidence & About 2.3\% CPU; sub-second latency (simulated)\\
+\cite{rani} Rani 2025 & Digital evidence & Smart contracts; Merkle roots; role-based access & Provenance tracking; no numeric results in abstract\\
+\cite{bhad} Bhad 2025 & Review, scream detection & MFCC, pitch; SVM, MLP, CNN; alert with location & Conceptual system; no accuracy reported\\
+\cite{park} Park 2026 & Evidence lifecycle & Multi-party authorisation; conditional decryption & 10,890 TPS; no successful attack in 300 attempts\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% ---------------------------- Table II -------------------------------
+\begin{table*}[!t]
+\caption{Capability Coverage Across the Reviewed Literature}
+\label{tab:matrix}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{L{4.6cm} C{3.4cm} C{3.0cm} C{3.4cm} C{2.4cm}}
+\toprule
+\textbf{Capability} & \textbf{Custody frameworks \cite{bonomi,sli,tian,brotsis,ahmad,jeong,khan,rani,aigboduwa}} & \textbf{Storage-focused \cite{kim,saif,ratul}} & \textbf{Privacy and legal workflow \cite{mli,jaquet,park}} & \textbf{Detection \cite{bhad}}\\
+\midrule
+Autonomous distress-triggered capture & \cross & \cross & \cross & \semi\ alert only\\
+Evidence encrypted before storage & \semi & \semi\ \cite{saif} & \tick & \cross\\
+Off-chain or decentralised storage & \semi & \tick & \semi & \cross\\
+On-chain anchoring of hash and metadata & \tick & \tick & \tick & \cross\\
+Privacy of witnesses or originator & \cross & \semi\ \cite{saif} & \tick & \cross\\
+Judicial or legal workflow support & \semi & \cross & \tick & \cross\\
+Offline custody transfer & \cross & \cross & \cross & \cross\\
+Field or deployment-grade evaluation & \cross & \cross & \cross & \cross\\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+{\footnotesize Legend: \tick\ addressed, \semi\ partly addressed, \cross\ not addressed in the abstracts and reported results reviewed. Group-level judgement; individual studies within a group may differ.}
+\end{table*}
+
+% =====================================================================
+\section{Gap Analysis}\label{sec:gaps}
+Reading Table~\ref{tab:matrix} by column shows that existing work covers either custody or detection, never both. We distil seven gaps.
+
+\textbf{G1 --- No bridge from detection to custody.} Distress detection work \cite{bhad} ends at an alert, and custody frameworks \cite{ahmad,jeong,rani} begin at submission of collected evidence. None of the reviewed work takes a detected emergency all the way to an anchored record.
+
+\textbf{G2 --- Trust at the point of capture.} Ledgers cannot vouch for what was fed to them. The strongest place to bind evidence to a trustworthy identity and timestamp is the moment of capture, on the capturing device.
+
+\textbf{G3 --- Custody under disconnection.} The reviewed pipelines assume network access when evidence is registered. None addresses what happens when the device is offline and then lost or seized.
+
+\textbf{G4 --- Edge-first operation.} Distress detection that depends on a server pipeline cannot run silently on a personal device without connectivity.
+
+\textbf{G5 --- Privacy of the originator.} Public anchoring risks exposing or linking the person who recorded the evidence. Mechanisms such as zero-knowledge proofs \cite{lavin}, keeping content off-chain \cite{jaquet,saif} and anonymous witness authentication \cite{mli} are known, but they have not been combined with personal-safety capture.
+
+\textbf{G6 --- Individual-scale deployment.} Frameworks built around consortium validators, judicial stakeholders or institutional identity \cite{ratul,khan,jeong} are impractical for one person with one phone.
+
+\textbf{G7 --- Empirical, deployment-grade evaluation.} Reported results come from simulated testbeds and test networks \cite{aigboduwa,mli,ratul} and are measured on different platforms. The surveys \cite{akinbi,batista,onyeashie} flag the same shortfall in practical implementation.
+
+% =====================================================================
+\section{Legal Context: Admissibility in India}\label{sec:legal}
+Admissibility is a legal question, and cryptography supports it without settling it. This section therefore describes how technical evidence properties relate to the law and does not claim guaranteed admissibility.
+
+In India, electronic records have been admitted through the certificate requirement that Section~65B of the Indian Evidence Act, 1872 introduced and the Supreme Court enforced in \emph{Anvar P.V.\ v.\ P.K.\ Basheer} \cite{anvar}. The Bharatiya Sakshya Adhiniyam, 2023 \cite{bsa} carries this forward in Section~63. Legal commentary indicates that the certificate format in its schedule asks for the hash value of the record and the hash function used, but this should be confirmed against the statute itself. A system that records a digest, a capture timestamp and an independently verifiable registration at capture time therefore produces material that fits this requirement. A court may still require expert verification, and the garbage-in caveat applies, so such systems strengthen the evidential foundation rather than guarantee admission. Readers should confirm the current text of the statute and the applicable schedule with qualified legal counsel.
+
+% =====================================================================
+\section{Open Challenges and Future Research}\label{sec:future}
+The gaps in Section~\ref{sec:gaps} translate into the following research directions.
+\begin{itemize}
+  \item \textbf{Capture-to-custody pipelines.} Study how a detected emergency can start recording and seal the evidence with a hash, a signature and a timestamp before it leaves the device (G1, G2).
+  \item \textbf{Offline custody transfer.} Investigate how encrypted evidence can be handed to trusted peers when no network is available, and how those peers can verify and later anchor it (G3).
+  \item \textbf{On-device detection.} Evaluate lightweight audio classifiers that run without a network and measure false-alarm rates, latency and battery cost (G4, G7).
+  \item \textbf{Originator privacy.} Combine zero-knowledge proofs \cite{lavin}, rotating identifiers and off-chain content so that verification does not reveal who captured what (G5).
+  \item \textbf{Multi-party release.} Adopt multi-party authorisation \cite{park} so that decryption or release of evidence needs several parties.
+  \item \textbf{Cost-efficient anchoring.} Batch many digests into one Merkle root per anchor \cite{jaquet} and compare network costs \cite{ratul} (G6).
+  \item \textbf{Key protection.} Keep keys in hardware-backed key stores or trusted execution environments, since the loss of a key defeats confidentiality \cite{saif}.
+  \item \textbf{Legal tooling.} Generate certificates aligned with Section~63 of the Bharatiya Sakshya Adhiniyam \cite{bsa} and study how courts treat blockchain-anchored evidence.
+  \item \textbf{Evaluation.} Report results on real devices and under realistic network conditions, in the same units used by earlier studies, so that systems can be compared (G7).
+\end{itemize}
+Continuous listening for distress also raises consent and bystander-privacy questions, so any deployment needs a clear policy on what audio is kept and for how long.
+
+% =====================================================================
+\section{Conclusion}\label{sec:conclusion}
+Blockchain-based chain-of-custody research has made integrity verifiable, and audio-based detection research has made emergencies recognisable, yet the two literatures have not met. This paper reviewed 20 studies, organised them into five themes, and showed through two comparison tables that none of the reviewed work couples autonomous on-device capture with custody that continues offline. We distilled seven research gaps and a research agenda that ranges from capture-to-custody pipelines and offline transfer to originator privacy and field evaluation. Closing these gaps would give a practical path from the first moment of danger to evidence that a court can verify.
+
+% =====================================================================
+\balance
+\begin{thebibliography}{99}
+\bibitem{bonomi} S. Bonomi, M. Casini, and C. Ciccotelli, ``B-CoC: A blockchain-based chain of custody for evidences management in digital forensics,'' arXiv:1807.10359, 2018 (also OASIcs, doi: 10.4230/OASIcs.Tokenomics.2019.12).
+\bibitem{ahmad} L. Ahmad, S. Khanji, F. Iqbal, and F. Kamoun, ``Blockchain-based chain of custody: Towards real-time tamper-proof evidence management,'' in \emph{Proc. 15th Int. Conf. Availability, Reliability and Security (ARES)}, 2020, doi: 10.1145/3407023.3409199.
+\bibitem{sli} S. Li, T. Qin, and G. Min, ``Blockchain-based digital forensics investigation framework in the Internet of Things and social systems,'' \emph{IEEE Trans. Computational Social Systems}, vol. 6, no. 6, pp. 1433--1441, 2019, doi: 10.1109/TCSS.2019.2927431.
+\bibitem{tian} Z. Tian, M. Li, M. Qiu, Y. Sun, and S. Su, ``Block-DEF: A secure digital evidence framework using blockchain,'' \emph{Information Sciences}, vol. 491, pp. 151--165, 2019.
+\bibitem{jeong} J. Jeong, D. Kim, B. Lee, and Y. Son, ``Design and implementation of a digital evidence management model based on Hyperledger Fabric,'' \emph{J. Information Processing Systems}, vol. 16, no. 4, pp. 760--773, 2020, doi: 10.3745/JIPS.04.0178.
+\bibitem{mli} M. Li, C. Lal, M. Conti, and D. Hu, ``LEChain: A blockchain-based lawful evidence management scheme for digital forensics,'' \emph{Future Generation Computer Systems}, vol. 115, pp. 406--420, 2021.
+\bibitem{bhad} R. S. Bhad and H. R. Vyawahare, ``AI-based human scream detection for crime prevention,'' \emph{World J. Advanced Research and Reviews}, vol. 28, no. 2, pp. 2378--2387, 2025, doi: 10.30574/wjarr.2025.28.2.3887.
+\bibitem{akinbi} A. Akinbi, \'A. MacDermott, and A. M. Ismael, ``A systematic literature review of blockchain-based Internet of Things (IoT) forensic investigation process models,'' \emph{Forensic Sci. Int.: Digital Investigation}, vol. 42, Art. 301470, 2022, doi: 10.1016/j.fsidi.2022.301470.
+\bibitem{batista} D. Batista \emph{et al.}, ``Exploring blockchain technology for chain of custody control in physical evidence: A systematic literature review,'' \emph{J. Risk and Financial Management}, vol. 16, no. 8, Art. 360, 2023.
+\bibitem{onyeashie} B. Onyeashie \emph{et al.}, ``A bibliometric analysis and systematic review of a blockchain-based chain of custody for digital evidence,'' in \emph{Proc. 13th EAI Int. Conf. Big Data Technologies and Applications (BDTA)}, Springer, 2024, doi: 10.1007/978-3-031-52265-9\_8.
+\bibitem{lavin} R. Lavin, X. Liu, H. Mohanty, L. Norman, G. Zaarour, and B. Krishnamachari, ``A survey on the applications of zero-knowledge proofs,'' arXiv:2408.00243, 2024.
+\bibitem{nist180} NIST, ``Secure Hash Standard (SHS),'' FIPS PUB 180-4, 2015.
+\bibitem{jaquet} D.-O. Jaquet-Chiffelle, L. Pfeiffer, L. Brocard, E. Benoist, and N. Foukia, ``Horodocs: A scalable, sustainable, robust and privacy-compliant system to securely timestamp digital evidence and documents,'' \emph{Forensic Sci. Int.: Digital Investigation}, vol. 53, Art. 301913, 2025.
+\bibitem{rani} D. R. Rani, T. Karthik, T. Narasimha, and K. Rajesh, ``Blockchain based framework for securing digital evidence,'' in \emph{Proc. 1st Int. Conf. Research and Development in Information, Communication, and Computing Technologies (ICRDICCT)}, SciTePress, 2025, pp. 488--493, doi: 10.5220/0013885300004919.
+\bibitem{benet} J. Benet, ``IPFS --- Content addressed, versioned, P2P file system,'' arXiv:1407.3561, 2014.
+\bibitem{saif} M. B. Saif, S. Migliorini, and F. Spoto, ``Efficient and secure distributed data storage and retrieval using Interplanetary File System and blockchain,'' \emph{Future Internet}, vol. 16, no. 3, Art. 98, 2024, doi: 10.3390/fi16030098.
+\bibitem{nist197} NIST, ``Advanced Encryption Standard (AES),'' FIPS PUB 197, 2001.
+\bibitem{khan} A. A. Khan, M. Uddin, A. A. Shaikh, A. A. Laghari, and A. E. Rajput, ``MF-Ledger: Blockchain Hyperledger Sawtooth-enabled novel and secure multimedia chain of custody forensic investigation architecture,'' \emph{IEEE Access}, vol. 9, pp. 103637--103650, 2021, doi: 10.1109/ACCESS.2021.3099037.
+\bibitem{ratul} Ratul \emph{et al.}, ``Managing digital evidence in cybercrime: Efforts towards a sustainable blockchain-based solution,'' \emph{Sustainability}, vol. 16, no. 24, Art. 10885, 2024, doi: 10.3390/su162410885.
+\bibitem{hershey} S. Hershey \emph{et al.}, ``CNN architectures for large-scale audio classification,'' in \emph{Proc. IEEE Int. Conf. Acoustics, Speech and Signal Processing (ICASSP)}, 2017, arXiv:1609.09430.
+\bibitem{salamon} J. Salamon and J. P. Bello, ``Deep convolutional neural networks and data augmentation for environmental sound classification,'' \emph{IEEE Signal Processing Letters}, vol. 24, no. 3, pp. 279--283, 2017.
+\bibitem{brotsis} S. Brotsis, N. Kolokotronis, K. Limniotis, S. Shiaeles, D. Kavallieros, E. Bellini, and C. Pavu\'e, ``Blockchain solutions for forensic evidence preservation in IoT environments,'' in \emph{Proc. IEEE Conf. Network Softwarization (NetSoft)}, 2019, pp. 110--114.
+\bibitem{aigboduwa} D. Aigboduwa, ``AI-augmented log forensics for PowerShell-based malware detection,'' \emph{British J. Earth Sciences Research}, vol. 13, no. 3, pp. 136--164, 2025, doi: 10.37745/bjesr.2013/vol13n3136164. % NOTE: the listing's title and abstract differ; the abstract describes BEEIF for web-server forensics.
+\bibitem{kim} D. Kim, S.-Y. Ihm, and Y. Son, ``Two-level blockchain system for digital crime evidence management,'' \emph{Sensors}, vol. 21, no. 9, Art. 3051, 2021, doi: 10.3390/s21093051.
+\bibitem{park} Y. Park and D. Jeong, ``A blockchain-based digital evidence management system: Integrating forensic procedures and multi-party authorization,'' \emph{Information Processing \& Management}, 2026, doi: 10.1016/j.ipm.2026.104654.
+\bibitem{anvar} \emph{Anvar P.V. v. P.K. Basheer}, (2014) 10 SCC 473 (Supreme Court of India).
+\bibitem{bsa} Bharatiya Sakshya Adhiniyam, 2023 (Act 47 of 2023), Government of India.
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,42 @@
+{
+  "description": "Sealing outputs from the Justice-Chain app with fixed test keys. Regenerate with JC_WRITE_DEVICE_VECTORS=1 flutter test test/device_vectors_test.dart",
+  "victim": {
+    "ed25519Seed": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fg=",
+    "ed25519Public": "C9NqXXwlhxk4a38wfaOQRnXj/d9JmBjRdQl6Qj073M8=",
+    "nodeId": "8ceeabd6d9b2c69d",
+    "x25519Private": "PkVMU1phaG92fYSLkpmgp661vMPK0djf5u30+wIJEBc=",
+    "x25519Public": "uZ/g9Mc6Bu3umDIeh1OrPhfUg6hLR7Qm89JG/QISkg4=",
+    "anchoringPrivateKey": "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+    "anchoringAddress": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23"
+  },
+  "guardians": [
+    {
+      "nodeId": "35c47912750d384f",
+      "x25519Private": "XWRrcnmAh46VnKOqsbi/xs3U2+Lp8Pf+BQwTGiEoLzY=",
+      "x25519Public": "V+U/7B2yLhcIrcj6dteUYQTZpeC+YvqqG+h+d++vWyI="
+    },
+    {
+      "nodeId": "c2c72671056073d4",
+      "x25519Private": "fIOKkZifpq20u8LJ0Nfe5ezz+gEIDxYdJCsyOUBHTlU=",
+      "x25519Public": "q0qTuJpBofs8OaXan8eXaeiqVVrc6i0f6mjJiWVlYXw="
+    },
+    {
+      "nodeId": "d9b55a0f7a14a724",
+      "x25519Private": "m6KpsLe+xczT2uHo7/b9BAsSGSAnLjU8Q0pRWF9mbXQ=",
+      "x25519Public": "3okHVzanLvfhMQGpT+adClvgemAJuXu6hwNHsjzIAA8="
+    }
+  ],
+  "clip": {
+    "plaintext": "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",
+    "plaintextHash": "feeb35168e038a3da6f56e0aaa18959ac967ff1a0b3b4f043476f560569da690",
+    "ciphertext": "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",
+    "signature": "5zqmi+xzW2SR5hSg+r1dgjF+IFCi875it8gkVTWtDRbZY3+0e6EF7Cpbt8r8h6a3vLNfwrtIi0dsUVI2EoP0DA==",
+    "anchorSignature": "7f88d6151187886a0fbf3779d564a35ad5e3b7a0eda31cce4d268e7354ea60043065797267cf9e4e7382ed50ddfb70027c1b594a0c5e3ee2f6554cda9e72790f1c",
+    "threshold": 2,
+    "guardianShares": {
+      "35c47912750d384f": "ucUpnSpCUzVEq9WHrYeiZIFRz5jBE2zqGihLc+yjE4o52iNo58UZPHXCob5gqv6jjw9idIrXbmEnsfJz4w==",
+      "c2c72671056073d4": "SEfefNmyNHw22d4P6excnrwrzmlb7DbsmIoCcHjK9eoAjKniUM5hv0v0eFKPekicFyCUxIR8P9BFgilLJg==",
+      "d9b55a0f7a14a724": "u8e+HLNzoF3M+MzHkfwb4ZoFoRzpgc2l6M++O9mhyA6wprbcXZFI3xsixrybokud3+27WmffEhkBP+P9Tw=="
+    }
+  }
+}
