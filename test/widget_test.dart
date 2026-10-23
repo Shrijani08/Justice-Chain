@@ -7,10 +7,10 @@ void main() {
   ) async {
     await tester.pumpWidget(const JusticeChainApp(isRegistered: false));
 
-    expect(find.text('Initialize Node'), findsOneWidget);
-    expect(find.text('Node Alias / Name'), findsOneWidget);
+    expect(find.text('Create Your Identity'), findsOneWidget);
+    expect(find.text('Your name'), findsOneWidget);
     expect(find.text('Vault PIN (4-6 digits)'), findsOneWidget);
     expect(find.text('Confirm PIN'), findsOneWidget);
-    expect(find.text('GENERATE SECURE KEYS'), findsOneWidget);
+    expect(find.text('Generate Secure Keys'), findsOneWidget);
   });
 }

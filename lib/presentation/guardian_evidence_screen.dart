@@ -6,6 +6,8 @@ import '../core/guardian_evidence_service.dart';
 import '../core/mesh_service.dart';
 import '../core/outbox_service.dart';
 import '../logic/guardian_manager.dart';
+import 'design/components.dart';
+import 'design/tokens.dart';
 import 'evidence_player_screen.dart';
 
 /// Clips from people who chose this phone as a guardian. A clip opens only
@@ -16,33 +18,38 @@ class GuardianEvidenceScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Guardian Evidence')),
-      body: ValueListenableBuilder(
-        valueListenable: Hive.box(MeshService.receivedSharesBoxName).listenable(),
-        builder: (context, _, _) => ValueListenableBuilder(
-          valueListenable: Hive.box(MeshService.relayBoxName).listenable(),
-          builder: (context, _, _) {
-            final incidents = GuardianEvidenceService.listIncidents();
-            if (incidents.isEmpty) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                    'Nothing yet. Clips and key pieces from people who added you as a '
-                    'guardian appear here when your phones are near each other.',
-                    textAlign: TextAlign.center,
+    return ValueListenableBuilder(
+      valueListenable: Hive.box(MeshService.receivedSharesBoxName).listenable(),
+      builder: (context, _, _) => ValueListenableBuilder(
+        valueListenable: Hive.box(MeshService.relayBoxName).listenable(),
+        builder: (context, _, _) {
+          final incidents = GuardianEvidenceService.listIncidents();
+          return SakPage(
+            title: 'Guardian Evidence',
+            slivers: [
+              if (incidents.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: SakEmptyState(
+                      icon: Icons.shield_rounded,
+                      title: 'Nothing yet',
+                      message: 'Clips and key pieces from people who added you as a '
+                          'guardian appear here when your phones are near each other.',
+                    ),
+                  ),
+                )
+              else
+                SliverList.builder(
+                  itemCount: incidents.length,
+                  itemBuilder: (context, i) => Reveal(
+                    index: i,
+                    child: _IncidentTile(incident: incidents[i]),
                   ),
                 ),
-              );
-            }
-            return ListView.separated(
-              itemCount: incidents.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (context, i) => _IncidentTile(incident: incidents[i]),
-            );
-          },
-        ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -62,30 +69,88 @@ class _IncidentTile extends StatelessWidget {
             : 'clip not received yet';
     final when = incident.capturedAt?.toLocal().toString().substring(0, 16) ?? 'unknown time';
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    final c = context.sak;
+    final pieces = incident.shareCount.clamp(0, quorum);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(SakSpace.lg, SakSpace.sm, SakSpace.lg, SakSpace.sm),
+      padding: const EdgeInsets.all(SakSpace.lg),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(SakRadius.card),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(incident.victimName, style: Theme.of(context).textTheme.titleMedium),
-          Text('$when · key pieces ${incident.shareCount}/$quorum · $source'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
+          Row(
             children: [
-              FilledButton.icon(
-                onPressed: incident.hasQuorum ? () => _openAndVerify(context) : null,
-                icon: const Icon(Icons.verified_user),
-                label: const Text('Open & verify'),
-              ),
-              if (incident.hasOwnShare)
-                OutlinedButton.icon(
-                  onPressed: () => _sendMyPiece(context),
-                  icon: const Icon(Icons.key),
-                  label: const Text('Send my piece'),
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: c.accentSoft,
+                child: Text(
+                  incident.victimName.characters.first.toUpperCase(),
+                  style: context.type.titleSmall?.copyWith(color: c.accent),
                 ),
+              ),
+              const SizedBox(width: SakSpace.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(incident.victimName, style: context.type.titleMedium),
+                    Text('$when · $source', style: context.type.bodySmall),
+                  ],
+                ),
+              ),
             ],
           ),
+          const SizedBox(height: SakSpace.lg),
+          // Key pieces as a row of slots: the clip opens when all are filled.
+          Semantics(
+            label: 'Key pieces ${incident.shareCount} of $quorum',
+            child: ExcludeSemantics(
+              child: Row(
+                children: [
+                  for (var i = 0; i < quorum; i++) ...[
+                    if (i > 0) const SizedBox(width: SakSpace.xs),
+                    Expanded(
+                      child: AnimatedContainer(
+                        duration: SakMotion.of(context, SakMotion.standard),
+                        curve: SakMotion.spring,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: i < pieces ? c.success : c.separator,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: SakSpace.md),
+                  Text(
+                    '${incident.shareCount} of $quorum keys',
+                    style: context.type.labelMedium?.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: SakSpace.lg),
+          SakButton(
+            label: 'Open & Verify',
+            icon: Icons.verified_user_rounded,
+            onPressed: incident.hasQuorum ? () => _openAndVerify(context) : null,
+          ),
+          if (incident.hasOwnShare) ...[
+            const SizedBox(height: SakSpace.sm),
+            SakButton(
+              label: 'Send My Piece',
+              icon: Icons.key_rounded,
+              style: SakButtonStyle.tinted,
+              onPressed: () => _sendMyPiece(context),
+            ),
+          ],
         ],
       ),
     );
@@ -95,19 +160,7 @@ class _IncidentTile extends StatelessWidget {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Expanded(child: Text('Decrypting and verifying…')),
-          ],
-        ),
-      ),
-    );
+    showSakProgress(context, 'Decrypting and verifying…');
 
     try {
       final clip = await GuardianEvidenceService.openAndVerify(incident.manifestHash);

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../core/identity_service.dart';
 // Note: We updated this import to match the actual functional UI screen.
 import 'home_screen.dart';
 import 'recovery_code_screen.dart';
 import 'restore_screen.dart';
+import 'design/components.dart';
+import 'design/tokens.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -40,11 +43,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Identity established securely!'),
-              backgroundColor: Colors.teal,
-              behavior: SnackBarBehavior.floating,
-            ),
+            const SnackBar(content: Text('Your identity is ready.')),
           );
 
           // Show the recovery code once, then the application dashboard.
@@ -63,11 +62,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Registration Failed: $e'),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-            ),
+            SnackBar(content: Text('Could not create your identity: $e')),
           );
         }
       } finally {
@@ -78,164 +73,140 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     }
   }
 
-  InputDecoration _buildInputDecoration(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: const TextStyle(color: Colors.grey),
-      prefixIcon: Icon(icon, color: Colors.tealAccent.shade400),
-      filled: true,
-      fillColor: Colors.white10,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.tealAccent.shade400, width: 2),
-      ),
-      errorStyle: const TextStyle(color: Colors.redAccent),
-    );
-  }
+  static final _digitsOnly = [FilteringTextInputFormatter.digitsOnly];
 
   @override
   Widget build(BuildContext context) {
+    final c = context.sak;
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: c.background,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 24.0,
-              vertical: 16.0,
-            ),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Icon(
-                    Icons.security_rounded,
-                    size: 80,
-                    color: Colors.tealAccent.shade400,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Initialize Node',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Keys are generated locally and secured\nin the hardware keystore.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 14),
-                  ),
-                  const SizedBox(height: 40),
-
-                  TextFormField(
-                    controller: _nameController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _buildInputDecoration(
-                      'Node Alias / Name',
-                      Icons.person_outline,
-                    ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'Alias is required'
-                        : null,
-                  ),
-                  const SizedBox(height: 20),
-
-                  TextFormField(
-                    controller: _pinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 6,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      letterSpacing: 4.0,
-                    ),
-                    decoration: _buildInputDecoration(
-                      'Vault PIN (4-6 digits)',
-                      Icons.lock_outline,
-                    ).copyWith(counterText: ""),
-                    validator: (value) {
-                      if (value == null || value.length < 4) {
-                        return 'PIN must be at least 4 digits';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 20),
-
-                  TextFormField(
-                    controller: _confirmPinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 6,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      letterSpacing: 4.0,
-                    ),
-                    decoration: _buildInputDecoration(
-                      'Confirm PIN',
-                      Icons.lock_reset,
-                    ).copyWith(counterText: ""),
-                    validator: (value) {
-                      if (value != _pinController.text) {
-                        return 'PINs do not match';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 40),
-
-                  ElevatedButton(
-                    onPressed: _isProcessing ? null : _processRegistration,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.tealAccent.shade700,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.teal.shade900,
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+            padding: const EdgeInsets.all(SakSpace.xl),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Reveal(
+                      child: Column(
+                        children: [
+                          const SealMark(),
+                          const SizedBox(height: SakSpace.xl),
+                          Text(
+                            'Create Your Identity',
+                            textAlign: TextAlign.center,
+                            style: context.type.headlineMedium,
+                          ),
+                          const SizedBox(height: SakSpace.sm),
+                          Text(
+                            'Your keys are made on this phone and kept in its hardware keystore.',
+                            textAlign: TextAlign.center,
+                            style: context.type.bodyMedium?.copyWith(color: c.inkSecondary),
+                          ),
+                        ],
                       ),
-                      elevation: 4,
                     ),
-                    child: _isProcessing
-                        ? const SizedBox(
-                            height: 24,
-                            width: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2.5,
+                    const SizedBox(height: SakSpace.xxl),
+                    Reveal(
+                      index: 1,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: _nameController,
+                            textInputAction: TextInputAction.next,
+                            textCapitalization: TextCapitalization.words,
+                            decoration: const InputDecoration(
+                              labelText: 'Your name',
+                              prefixIcon: Icon(Icons.person_outline_rounded),
                             ),
-                          )
-                        : const Text(
-                            'GENERATE SECURE KEYS',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.5,
+                            validator: (value) => value == null || value.trim().isEmpty
+                                ? 'Enter your name'
+                                : null,
+                          ),
+                          const SizedBox(height: SakSpace.md),
+                          TextFormField(
+                            controller: _pinController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: _digitsOnly,
+                            textInputAction: TextInputAction.next,
+                            obscureText: true,
+                            maxLength: 6,
+                            style: context.type.bodyLarge?.copyWith(letterSpacing: 4.0),
+                            decoration: const InputDecoration(
+                              labelText: 'Vault PIN (4-6 digits)',
+                              prefixIcon: Icon(Icons.lock_outline_rounded),
+                              counterText: '',
+                            ),
+                            validator: (value) {
+                              if (value == null || value.length < 4) {
+                                return 'PIN must be at least 4 digits';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: SakSpace.md),
+                          TextFormField(
+                            controller: _confirmPinController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: _digitsOnly,
+                            textInputAction: TextInputAction.done,
+                            obscureText: true,
+                            maxLength: 6,
+                            style: context.type.bodyLarge?.copyWith(letterSpacing: 4.0),
+                            decoration: const InputDecoration(
+                              labelText: 'Confirm PIN',
+                              prefixIcon: Icon(Icons.lock_reset_rounded),
+                              counterText: '',
+                            ),
+                            onFieldSubmitted: (_) {
+                              if (!_isProcessing) _processRegistration();
+                            },
+                            validator: (value) {
+                              if (value != _pinController.text) {
+                                return 'PINs do not match';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: SakSpace.xl),
+                    Reveal(
+                      index: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SakButton(
+                            label: 'Generate Secure Keys',
+                            icon: Icons.key_rounded,
+                            loading: _isProcessing,
+                            onPressed: _isProcessing ? null : _processRegistration,
+                          ),
+                          const SizedBox(height: SakSpace.sm),
+                          TextButton(
+                            onPressed: _isProcessing
+                                ? null
+                                : () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const RestoreScreen()),
+                                    ),
+                            child: const Text(
+                              'Lost your phone? Restore with recovery code',
+                              textAlign: TextAlign.center,
                             ),
                           ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextButton(
-                    onPressed: _isProcessing
-                        ? null
-                        : () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const RestoreScreen()),
-                            ),
-                    child: const Text('Lost your phone? Restore with recovery code'),
-                  ),
-                ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

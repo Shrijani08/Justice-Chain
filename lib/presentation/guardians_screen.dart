@@ -3,6 +3,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../core/evidence_encryptor.dart';
 import '../logic/guardian_manager.dart';
+import 'design/components.dart';
+import 'design/tokens.dart';
 
 /// Lists paired guardians with rename and remove. Adding still happens via
 /// Scan QR on the home screen, which hands the camera over safely.
@@ -11,43 +13,53 @@ class GuardiansScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('My Guardians')),
-      body: ValueListenableBuilder(
-        valueListenable: Hive.box('vault_box').listenable(
-          keys: ['trusted_guardians', GuardianManager.allowSingleGuardianKey],
-        ),
-        builder: (context, _, _) {
-          final guardians = GuardianManager.getTrustedGuardians().entries
-              .map((e) => _Guardian.from(e.key as String, e.value as Map))
-              .toList()
-            ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-          final withKeys = guardians.where((g) => g.canHoldKeys).length;
-          final singleMode = GuardianManager.allowSingleGuardian;
-          final belowQuorum = withKeys < EvidenceEncryptor.guardianQuorum;
-
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 24),
-            children: [
-              if (belowQuorum)
-                _QuorumWarning(withKeys: withKeys, singleMode: singleMode),
-              _SingleGuardianSwitch(enabled: singleMode),
-              const Divider(height: 1),
-              if (guardians.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(24, 32, 24, 0),
-                  child: Text(
-                    'No guardians yet. Use Scan QR on the home screen to add someone '
-                    'you trust.',
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              else
-                for (final g in guardians) _GuardianTile(guardian: g),
-            ],
-          );
-        },
+    return ValueListenableBuilder(
+      valueListenable: Hive.box('vault_box').listenable(
+        keys: ['trusted_guardians', GuardianManager.allowSingleGuardianKey],
       ),
+      builder: (context, _, _) {
+        final guardians = GuardianManager.getTrustedGuardians().entries
+            .map((e) => _Guardian.from(e.key as String, e.value as Map))
+            .toList()
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        final withKeys = guardians.where((g) => g.canHoldKeys).length;
+        final singleMode = GuardianManager.allowSingleGuardian;
+        final belowQuorum = withKeys < EvidenceEncryptor.guardianQuorum;
+
+        return SakPage(
+          title: 'My Guardians',
+          slivers: [
+            SliverList.list(
+              children: [
+                AnimatedSize(
+                  duration: SakMotion.of(context, SakMotion.standard),
+                  curve: SakMotion.spring,
+                  alignment: Alignment.topCenter,
+                  child: belowQuorum
+                      ? _QuorumWarning(withKeys: withKeys, singleMode: singleMode)
+                      : const SizedBox(width: double.infinity),
+                ),
+                SakGroup(
+                  footer: 'Only applies while you have fewer than '
+                      '${EvidenceEncryptor.guardianQuorum} guardians.',
+                  children: [_SingleGuardianSwitch(enabled: singleMode)],
+                ),
+                if (guardians.isEmpty)
+                  const SakEmptyState(
+                    icon: Icons.group_add_rounded,
+                    title: 'No guardians yet',
+                    message: 'Use Scan QR on the home screen to add someone you trust.',
+                  )
+                else
+                  SakGroup(
+                    header: guardians.length == 1 ? '1 guardian' : '${guardians.length} guardians',
+                    children: [for (final g in guardians) _GuardianTile(guardian: g)],
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -87,9 +99,6 @@ class _QuorumWarning extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final quorum = EvidenceEncryptor.guardianQuorum;
-    final scheme = Theme.of(context).colorScheme;
-    final background = singleMode ? scheme.secondaryContainer : scheme.errorContainer;
-    final foreground = singleMode ? scheme.onSecondaryContainer : scheme.onErrorContainer;
     final message = singleMode
         ? 'Single-guardian mode is on. While you have fewer than $quorum guardians, '
             'any one guardian can open your new recordings. You have $withKeys '
@@ -97,25 +106,11 @@ class _QuorumWarning extends StatelessWidget {
         : 'Add at least $quorum guardians. A recording can only be opened '
             'when $quorum of them combine their key pieces. You have '
             '$withKeys that can hold one.';
-    return Semantics(
-      container: true,
-      child: Card(
-        margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-        color: background,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                singleMode ? Icons.info_outline : Icons.warning_amber_rounded,
-                color: foreground,
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: Text(message, style: TextStyle(color: foreground))),
-            ],
-          ),
-        ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(SakSpace.lg, SakSpace.sm, SakSpace.lg, SakSpace.sm),
+      child: SakNotice(
+        tone: singleMode ? NoticeTone.info : NoticeTone.warning,
+        message: message,
       ),
     );
   }
@@ -131,10 +126,8 @@ class _SingleGuardianSwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     return SwitchListTile(
       title: const Text('Let one guardian open my recordings'),
-      subtitle: Text(
-        'Only applies while you have fewer than '
-        '${EvidenceEncryptor.guardianQuorum} guardians.',
-      ),
+      secondary: SakIconTile(icon: Icons.person_rounded, color: context.sak.warning),
+      contentPadding: const EdgeInsets.symmetric(horizontal: SakSpace.lg, vertical: SakSpace.xs),
       value: enabled,
       onChanged: (value) async {
         if (value && !await _confirmEnable(context)) return;
@@ -185,31 +178,39 @@ class _GuardianTile extends StatelessWidget {
         : ' · paired ${added.day.toString().padLeft(2, '0')}/'
             '${added.month.toString().padLeft(2, '0')}/${added.year}';
 
-    return ListTile(
-      minVerticalPadding: 12,
+    final c = context.sak;
+    return SakRow(
       leading: CircleAvatar(
-        child: Text(guardian.name.characters.first.toUpperCase()),
+        radius: 18,
+        backgroundColor: c.accentSoft,
+        foregroundColor: c.accent,
+        child: Text(
+          guardian.name.characters.first.toUpperCase(),
+          style: context.type.titleSmall?.copyWith(color: c.accent),
+        ),
       ),
-      title: Text(guardian.name),
-      subtitle: Text(
-        'ID ${guardian.shortId}$addedText'
-        '${guardian.canHoldKeys ? '' : '\nCan\'t hold key pieces. Pair again to fix.'}',
-      ),
-      isThreeLine: !guardian.canHoldKeys,
+      title: guardian.name,
+      subtitle: 'ID ${guardian.shortId}$addedText'
+          '${guardian.canHoldKeys ? '' : '\nCan\'t hold key pieces. Pair again to fix.'}',
+      chevron: false,
       trailing: PopupMenuButton<String>(
         tooltip: 'Options for ${guardian.name}',
+        icon: Icon(Icons.more_horiz_rounded, color: c.inkSecondary),
         onSelected: (action) {
           if (action == 'rename') _rename(context);
           if (action == 'remove') _remove(context);
         },
-        itemBuilder: (context) => const [
-          PopupMenuItem(
+        itemBuilder: (context) => [
+          const PopupMenuItem(
             value: 'rename',
-            child: ListTile(leading: Icon(Icons.edit), title: Text('Rename')),
+            child: ListTile(leading: Icon(Icons.edit_rounded), title: Text('Rename')),
           ),
           PopupMenuItem(
             value: 'remove',
-            child: ListTile(leading: Icon(Icons.person_remove), title: Text('Remove')),
+            child: ListTile(
+              leading: Icon(Icons.person_remove_rounded, color: c.danger),
+              title: Text('Remove', style: TextStyle(color: c.danger)),
+            ),
           ),
         ],
       ),

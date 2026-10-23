@@ -14,6 +14,9 @@ import '../core/yamnet_detector.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/mesh_service.dart';
 import '../logic/safety_signals.dart';
+import 'design/components.dart';
+import 'design/sentinel.dart';
+import 'design/tokens.dart';
 import 'evidence_viewer_screen.dart';
 import 'guardian_evidence_screen.dart';
 import 'guardian_pairing_screen.dart';
@@ -279,6 +282,25 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     });
   }
 
+
+  void _push(Widget screen) {
+    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+  }
+
+  SentinelState _sentinelState({
+    required bool recording,
+    required bool distress,
+    required bool listening,
+    required bool modelReady,
+  }) {
+    if (_isProcessingSave) return SentinelState.saving;
+    if (recording) return SentinelState.recording;
+    if (distress) return SentinelState.alert;
+    if (listening) return SentinelState.listening;
+    if (!modelReady) return SentinelState.starting;
+    return SentinelState.offline;
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentStatus = appStatus.watch(context);
@@ -290,261 +312,248 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> {
     final isAiActive = aiActive.watch(context);
     final currentAiPrediction = aiPrediction.watch(context);
     final isDistressDetected = aiDistressDetected.watch(context);
-    final aiConfidencePercent = (currentAiConfidence * 100).toStringAsFixed(0);
+    final c = context.sak;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Justice-Chain Sentinel"),
-        backgroundColor: Colors.red.shade100,
-        centerTitle: true,
-      ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: 32),
+    final state = _sentinelState(
+      recording: isRecordingActive,
+      distress: isDistressDetected,
+      listening: isAiActive,
+      modelReady: isAiReady,
+    );
+
+    return SakPage(
+      title: 'Sakshya',
+      slivers: [
+        SliverToBoxAdapter(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(
-                isRecordingActive ? Icons.fiber_manual_record : Icons.security,
-                size: 100,
-                color: isRecordingActive
-                    ? Colors.red
-                    : (isReady ? Colors.green : Colors.grey),
-              ),
-              const SizedBox(height: 30),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  currentStatus,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+              // The live state: the seal, what the system says, and what is on.
+              Reveal(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(SakSpace.gutter, SakSpace.sm, SakSpace.gutter, 0),
+                  child: Column(
+                    children: [
+                      SentinelOrb(state: state, level: currentAiConfidence),
+                      const SizedBox(height: SakSpace.lg),
+                      AnimatedSwitcher(
+                        duration: SakMotion.of(context, SakMotion.quick),
+                        child: Text(
+                          currentStatus,
+                          key: ValueKey(currentStatus),
+                          textAlign: TextAlign.center,
+                          style: context.type.bodyMedium?.copyWith(color: c.inkSecondary),
+                        ),
+                      ),
+                      const SizedBox(height: SakSpace.md),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: SakSpace.sm,
+                        runSpacing: SakSpace.sm,
+                        children: [
+                          StatusPill(
+                            label: isAiActive ? 'Listening' : 'Idle',
+                            color: isAiActive ? c.success : c.inkSecondary,
+                            pulsing: isAiActive,
+                          ),
+                          StatusPill(
+                            label: isAiReady ? 'Model ready' : 'Model loading',
+                            color: isAiReady ? c.success : c.inkSecondary,
+                            icon: isAiReady ? Icons.check_rounded : Icons.downloading_rounded,
+                          ),
+                          StatusPill(
+                            label: isReady ? 'Camera ready' : 'Camera off',
+                            color: isReady ? c.success : c.warning,
+                            icon: isReady ? Icons.videocam_rounded : Icons.videocam_off_rounded,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
-              SizedBox(
-                width: 280,
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          isDistressDetected
-                              ? Icons.warning_amber
-                              : (isAiActive
-                                    ? Icons.hearing
-                                    : Icons.psychology_alt),
-                          color: isDistressDetected
-                              ? Colors.red
-                              : (isAiActive ? Colors.green : Colors.grey),
-                        ),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            currentAiStatus,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          isAiReady ? "Model ready" : "Model loading",
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          isAiActive ? "Listening" : "Idle",
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: isAiActive ? Colors.green : Colors.grey,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      "Hears: $currentAiPrediction",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: isDistressDetected
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        color: isDistressDetected ? Colors.red : Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(
-                      value: currentAiConfidence,
-                      minHeight: 8,
-                      borderRadius: BorderRadius.circular(4),
-                      backgroundColor: Colors.grey.shade300,
-                      color: currentAiConfidence >= YamnetDetector.threshold
-                          ? Colors.red
-                          : Colors.green,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      "Distress score: $aiConfidencePercent%",
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 36),
-              if (isReady) ...[
+              const SizedBox(height: SakSpace.xl),
+
+              if (isReady)
                 // The manual SOS path: it calls startEmergencyRecording()
                 // directly, bypassing the AI model and its 2-of-3 confirmation
                 // window entirely. A victim who can act must never depend on
                 // the model being right or fast enough.
-                ElevatedButton.icon(
-                  onPressed: _isProcessingSave
-                      ? null
-                      : () {
-                          if (isRecordingActive) {
-                            stopEmergencyRecording();
-                          } else {
-                            startEmergencyRecording();
-                          }
-                        },
-                  icon: Icon(isRecordingActive ? Icons.stop : Icons.videocam),
-                  label: Text(
-                    _isProcessingSave
-                        ? "SAVING TO VAULT..."
-                        : (isRecordingActive
-                              ? "STOP RECORDING"
-                              : "SOS — START RECORDING"),
+                Reveal(
+                  index: 1,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: SakSpace.gutter),
+                    child: SakButton(
+                      label: _isProcessingSave
+                          ? 'Sealing to Vault…'
+                          : (isRecordingActive ? 'Stop Recording' : 'SOS · Start Recording'),
+                      icon: isRecordingActive ? Icons.stop_rounded : Icons.videocam_rounded,
+                      style: isRecordingActive ? SakButtonStyle.dangerTinted : SakButtonStyle.danger,
+                      loading: _isProcessingSave,
+                      onPressed: _isProcessingSave
+                          ? null
+                          : () {
+                              if (isRecordingActive) {
+                                stopEmergencyRecording();
+                              } else {
+                                startEmergencyRecording();
+                              }
+                            },
+                    ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isRecordingActive
-                        ? Colors.black
-                        : Colors.red,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(220, 60),
+                )
+              else
+                Reveal(
+                  index: 1,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: SakSpace.gutter),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SakNotice(
+                          tone: NoticeTone.warning,
+                          title: 'Recording is not ready',
+                          message: 'Sakshya needs the camera and microphone to record evidence. '
+                              'Allow both, then start protection.',
+                        ),
+                        const SizedBox(height: SakSpace.md),
+                        SakButton(
+                          label: 'Start Protection',
+                          icon: Icons.refresh_rounded,
+                          onPressed: _initPermissions,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
+              const SizedBox(height: SakSpace.xl),
+
+              // What the AI is hearing, with the trigger line drawn in.
+              Reveal(
+                index: 2,
+                child: SakGroup(
+                  header: 'Listening',
+                  children: [
+                    SakRow(
+                      icon: isDistressDetected
+                          ? Icons.warning_amber_rounded
+                          : (isAiActive ? Icons.hearing_rounded : Icons.psychology_alt_rounded),
+                      iconColor: isDistressDetected ? c.danger : (isAiActive ? c.success : c.inkSecondary),
+                      title: 'Hears: $currentAiPrediction',
+                      titleStyle: context.type.bodyLarge?.copyWith(
+                        fontWeight: isDistressDetected ? FontWeight.w600 : null,
+                        color: isDistressDetected ? c.danger : null,
+                      ),
+                      subtitle: currentAiStatus,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(SakSpace.lg, SakSpace.md, SakSpace.lg, SakSpace.lg),
+                      child: ThresholdMeter(
+                        value: currentAiConfidence,
+                        threshold: YamnetDetector.threshold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              if (isReady) ...[
                 // Debug-only affordances: a stray tap on these in the field
                 // could fire a false emergency upload, and they advertise
                 // exactly how the app works to anyone holding the phone, so
                 // they must never ship in a release build.
-                if (kDebugMode) ...[
-                  const SizedBox(height: 20),
-                  OutlinedButton.icon(
-                    onPressed: _isProcessingSave || isRecordingActive
-                        ? null
-                        : () async {
-                            logger.w("Demo AI distress trigger pressed.");
-                            await EmergencyController.simulateAIDistressDetection();
-                          },
-                    icon: const Icon(Icons.warning_amber),
-                    label: const Text("Debug: Simulate AI Distress"),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton.icon(
-                    onPressed: _debugPrintVault,
-                    icon: const Icon(Icons.storage),
-                    label: const Text("Debug: Print Vault Contents"),
-                  ),
-                  // Until the redesign's settings screen: switch the launcher
-                  // face. The calculator appears the next time the app opens.
-                  ValueListenableBuilder<bool>(
-                    valueListenable: DisguiseService.enabled,
-                    builder: (context, disguised, _) => TextButton.icon(
-                      onPressed: () => DisguiseService.setEnabled(!disguised),
-                      icon: const Icon(Icons.calculate),
-                      label: Text(disguised
-                          ? "Debug: Stop Calculator Disguise"
-                          : "Debug: Disguise as Calculator"),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-
-                // Guardian Pairing Controls Side-by-Side
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const GuardianPairingScreen(),
+                if (kDebugMode)
+                  Reveal(
+                    index: 3,
+                    child: SakGroup(
+                      header: 'Debug',
+                      children: [
+                        SakRow(
+                          icon: Icons.warning_amber_rounded,
+                          iconColor: c.warning,
+                          title: 'Simulate AI Distress',
+                          chevron: false,
+                          enabled: !(_isProcessingSave || isRecordingActive),
+                          onTap: _isProcessingSave || isRecordingActive
+                              ? null
+                              : () async {
+                                  logger.w("Demo AI distress trigger pressed.");
+                                  await EmergencyController.simulateAIDistressDetection();
+                                },
+                        ),
+                        SakRow(
+                          icon: Icons.storage_rounded,
+                          iconColor: c.inkSecondary,
+                          title: 'Print Vault Contents',
+                          chevron: false,
+                          onTap: _debugPrintVault,
+                        ),
+                        // Until the redesign's settings screen: switch the launcher
+                        // face. The calculator appears the next time the app opens.
+                        ValueListenableBuilder<bool>(
+                          valueListenable: DisguiseService.enabled,
+                          builder: (context, disguised, _) => SakRow(
+                            icon: Icons.calculate_rounded,
+                            iconColor: c.inkSecondary,
+                            title: disguised ? 'Stop Calculator Disguise' : 'Disguise as Calculator',
+                            chevron: false,
+                            onTap: () => DisguiseService.setEnabled(!disguised),
                           ),
-                        );
-                      },
-                      icon: const Icon(Icons.qr_code_2),
-                      label: const Text('Show My QR'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueGrey,
-                        foregroundColor: Colors.white,
-                      ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    OutlinedButton.icon(
-                      onPressed: () =>
-                          _openCameraScreen(const GuardianScannerScreen()),
-                      icon: const Icon(Icons.qr_code_scanner),
-                      label: const Text('Scan QR'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const GuardiansScreen(),
+                  ),
+
+                Reveal(
+                  index: 4,
+                  child: SakGroup(
+                    header: 'Guardians',
+                    children: [
+                      SakRow(
+                        icon: Icons.qr_code_2_rounded,
+                        title: 'Show My QR',
+                        subtitle: 'A guardian scans this to pair with you',
+                        onTap: () => _push(const GuardianPairingScreen()),
                       ),
-                    );
-                  },
-                  icon: const Icon(Icons.groups),
-                  label: const Text('My Guardians'),
-                ),
-                TextButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const EvidenceViewerScreen(),
+                      SakRow(
+                        icon: Icons.qr_code_scanner_rounded,
+                        title: 'Scan QR',
+                        subtitle: 'Add someone you trust as a guardian',
+                        onTap: () => _openCameraScreen(const GuardianScannerScreen()),
                       ),
-                    );
-                  },
-                  icon: const Icon(Icons.video_library),
-                  label: const Text('My Evidence'),
-                ),
-                TextButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const GuardianEvidenceScreen(),
+                      SakRow(
+                        icon: Icons.groups_rounded,
+                        title: 'My Guardians',
+                        onTap: () => _push(const GuardiansScreen()),
                       ),
-                    );
-                  },
-                  icon: const Icon(Icons.shield),
-                  label: const Text('Guardian Evidence'),
+                    ],
+                  ),
                 ),
-              ] else ...[
-                ElevatedButton.icon(
-                  onPressed: _initPermissions,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text("Initialize System"),
+                Reveal(
+                  index: 5,
+                  child: SakGroup(
+                    header: 'Evidence',
+                    children: [
+                      SakRow(
+                        icon: Icons.video_library_rounded,
+                        title: 'My Evidence',
+                        subtitle: 'Your sealed recordings',
+                        onTap: () => _push(const EvidenceViewerScreen()),
+                      ),
+                      SakRow(
+                        icon: Icons.shield_rounded,
+                        title: 'Guardian Evidence',
+                        subtitle: 'Clips from people who chose you',
+                        onTap: () => _push(const GuardianEvidenceScreen()),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ],
           ),
         ),
-      ),
+      ],
     );
   }
 }

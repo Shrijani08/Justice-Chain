@@ -301,13 +301,15 @@ void main() {
       expect(find.text(code.split('-').join('  ')), findsOneWidget);
 
       await tester.enterText(find.byKey(const ValueKey('recovery-confirm')), 'WRONG');
-      await tester.tap(find.text("I'VE WRITTEN IT DOWN"));
+      await tester.ensureVisible(find.text("I've Written It Down"));
+      await tester.tap(find.text("I've Written It Down"));
       await tester.pump();
       expect(done, isFalse);
       expect(find.textContaining('not the last group'), findsOneWidget);
 
       await tester.enterText(find.byKey(const ValueKey('recovery-confirm')), code.split('-').last.toLowerCase());
-      await tester.tap(find.text("I'VE WRITTEN IT DOWN"));
+      await tester.ensureVisible(find.text("I've Written It Down"));
+      await tester.tap(find.text("I've Written It Down"));
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
       await tester.pump();
       expect(done, isTrue);

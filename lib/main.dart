@@ -4,6 +4,7 @@ import 'core/ai_service.dart';
 import 'core/identity_service.dart';
 import 'core/app_services.dart';
 import 'core/disguise_service.dart';
+import 'presentation/design/app_theme.dart';
 import 'presentation/disguise_gate.dart';
 import 'presentation/home_screen.dart';
 import 'presentation/registration_screen.dart';
@@ -82,13 +83,9 @@ class JusticeChainApp extends StatelessWidget {
     return MaterialApp(
       title: title,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.red,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: buildSakTheme(Brightness.light),
+      darkTheme: buildSakTheme(Brightness.dark),
+      themeMode: ThemeMode.system,
       home: isRegistered
           ? Scaffold(
               body: const MainSafetyScreen(),
@@ -98,9 +95,8 @@ class JusticeChainApp extends StatelessWidget {
               floatingActionButton: kDebugMode
                   ? FloatingActionButton.extended(
                       onPressed: testPinataUpload,
-                      icon: const Icon(Icons.cloud_upload),
+                      icon: const Icon(Icons.cloud_upload_rounded),
                       label: const Text('Test IPFS'),
-                      backgroundColor: Colors.blue,
                     )
                   : null,
             )

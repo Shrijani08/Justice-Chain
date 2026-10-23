@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/recovery_service.dart';
 import 'home_screen.dart';
+import 'design/components.dart';
+import 'design/tokens.dart';
 
 /// "Restore with recovery code": brings back a lost phone's identity and
 /// lists its recordings from the ledger, so they can be watched again.
@@ -57,91 +60,108 @@ class _RestoreScreenState extends State<RestoreScreen> {
       if (mounted) setState(() => _working = false);
     }
   }
-
-  InputDecoration _decoration(String label, {String? error}) => InputDecoration(
+  InputDecoration _decoration(String label, {String? error, IconData? icon}) => InputDecoration(
         labelText: label,
         errorText: error,
-        filled: true,
-        fillColor: Colors.white10,
         counterText: '',
+        prefixIcon: icon == null ? null : Icon(icon),
       );
+
+  static final _digitsOnly = [FilteringTextInputFormatter.digitsOnly];
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: const Text('Restore with recovery code'),
-        backgroundColor: Colors.black87,
-        foregroundColor: Colors.white,
-      ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(24),
-          children: [
-            const Text(
-              'Enter the code you wrote down when you first set up the app. '
-              'This phone becomes your old phone: same identity, and your recordings come back from the ledger.',
-              style: TextStyle(color: Colors.white70, height: 1.4),
-            ),
-            const SizedBox(height: 20),
-            TextFormField(
-              controller: _codeController,
-              key: const ValueKey('restore-code'),
-              textCapitalization: TextCapitalization.characters,
-              minLines: 2,
-              maxLines: 2,
-              style: const TextStyle(color: Colors.white, fontFamily: 'monospace', letterSpacing: 1.5),
-              decoration: _decoration('Recovery code', error: _codeError),
-              validator: (v) => v == null || v.trim().isEmpty ? 'Enter your recovery code' : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _nameController,
-              key: const ValueKey('restore-name'),
-              style: const TextStyle(color: Colors.white),
-              decoration: _decoration('Your name'),
-              validator: (v) => v == null || v.trim().isEmpty ? 'Name is required' : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _pinController,
-              key: const ValueKey('restore-pin'),
-              keyboardType: TextInputType.number,
-              obscureText: true,
-              maxLength: 6,
-              style: const TextStyle(color: Colors.white, letterSpacing: 4),
-              decoration: _decoration('New vault PIN (4-6 digits)'),
-              validator: (v) => v == null || !RegExp(r'^\d{4,6}$').hasMatch(v) ? 'PIN must be 4-6 digits' : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _confirmPinController,
-              key: const ValueKey('restore-confirm-pin'),
-              keyboardType: TextInputType.number,
-              obscureText: true,
-              maxLength: 6,
-              style: const TextStyle(color: Colors.white, letterSpacing: 4),
-              decoration: _decoration('Confirm PIN'),
-              validator: (v) => v != _pinController.text ? 'PINs do not match' : null,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              key: const ValueKey('restore-button'),
-              onPressed: _working ? null : _restore,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.tealAccent.shade700,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+    final c = context.sak;
+    final pinStyle = context.type.bodyLarge?.copyWith(letterSpacing: 4);
+    return SakPage(
+      title: 'Restore',
+      slivers: [
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Form(
+                key: _formKey,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: SakSpace.gutter),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Enter the code you wrote down when you first set up the app. '
+                        'This phone becomes your old phone: same identity, and your recordings come back from the ledger.',
+                        style: context.type.bodyMedium?.copyWith(color: c.inkSecondary),
+                      ),
+                      const SizedBox(height: SakSpace.xl),
+                      TextFormField(
+                        controller: _codeController,
+                        key: const ValueKey('restore-code'),
+                        textCapitalization: TextCapitalization.characters,
+                        minLines: 2,
+                        maxLines: 2,
+                        style: context.type.bodyLarge?.copyWith(
+                          fontFamily: SakMono.family,
+                          fontFamilyFallback: SakMono.fallback,
+                          letterSpacing: 1.5,
+                        ),
+                        decoration: _decoration('Recovery code', error: _codeError),
+                        validator: (v) => v == null || v.trim().isEmpty ? 'Enter your recovery code' : null,
+                      ),
+                      const SizedBox(height: SakSpace.xl),
+                      Padding(
+                        padding: const EdgeInsets.only(left: SakSpace.xs, bottom: SakSpace.sm),
+                        child: Text('This phone', style: context.type.labelMedium),
+                      ),
+                      TextFormField(
+                        controller: _nameController,
+                        key: const ValueKey('restore-name'),
+                        textInputAction: TextInputAction.next,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: _decoration('Your name', icon: Icons.person_outline_rounded),
+                        validator: (v) => v == null || v.trim().isEmpty ? 'Name is required' : null,
+                      ),
+                      const SizedBox(height: SakSpace.md),
+                      TextFormField(
+                        controller: _pinController,
+                        key: const ValueKey('restore-pin'),
+                        keyboardType: TextInputType.number,
+                        inputFormatters: _digitsOnly,
+                        textInputAction: TextInputAction.next,
+                        obscureText: true,
+                        maxLength: 6,
+                        style: pinStyle,
+                        decoration: _decoration('New vault PIN (4-6 digits)', icon: Icons.lock_outline_rounded),
+                        validator: (v) => v == null || !RegExp(r'^\d{4,6}$').hasMatch(v) ? 'PIN must be 4-6 digits' : null,
+                      ),
+                      const SizedBox(height: SakSpace.md),
+                      TextFormField(
+                        controller: _confirmPinController,
+                        key: const ValueKey('restore-confirm-pin'),
+                        keyboardType: TextInputType.number,
+                        inputFormatters: _digitsOnly,
+                        textInputAction: TextInputAction.done,
+                        obscureText: true,
+                        maxLength: 6,
+                        style: pinStyle,
+                        decoration: _decoration('Confirm PIN', icon: Icons.lock_reset_rounded),
+                        validator: (v) => v != _pinController.text ? 'PINs do not match' : null,
+                      ),
+                      const SizedBox(height: SakSpace.xl),
+                      SakButton(
+                        key: const ValueKey('restore-button'),
+                        label: 'Restore',
+                        icon: Icons.restore_rounded,
+                        loading: _working,
+                        onPressed: _working ? null : _restore,
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              child: _working
-                  ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2.5))
-                  : const Text('RESTORE'),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

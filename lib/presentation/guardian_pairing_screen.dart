@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../core/identity_service.dart';
+import 'design/components.dart';
+import 'design/tokens.dart';
 
 class GuardianPairingScreen extends StatefulWidget {
   const GuardianPairingScreen({super.key});
@@ -22,6 +24,7 @@ class _GuardianPairingScreenState extends State<GuardianPairingScreen> {
   Future<void> _loadIdentity() async {
     final payload = await IdentityService.getQrPayload();
     final id = await IdentityService.getMyNodeId();
+    if (!mounted) return;
     setState(() {
       _qrPayload = payload;
       _nodeId = id;
@@ -30,67 +33,90 @@ class _GuardianPairingScreenState extends State<GuardianPairingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Add Guardian'),
-        backgroundColor: Colors.black87,
-      ),
-      body: Center(
-        child: _qrPayload == null
-            ? const CircularProgressIndicator()
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text(
-                    'Your Secure Node ID',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade200,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: SelectableText(
-                      _nodeId ?? '',
-                      style: const TextStyle(
-                        fontSize: 24, 
-                        fontWeight: FontWeight.w900, 
-                        letterSpacing: 2.0
+    final c = context.sak;
+    final payload = _qrPayload;
+    return SakPage(
+      title: 'Add Guardian',
+      slivers: [
+        // A plain box, not SliverFillRemaining: that measures its child's
+        // intrinsic height, which QrImageView (a LayoutBuilder) can't give.
+        SliverToBoxAdapter(
+          child: payload == null
+              ? const Padding(
+                  padding: EdgeInsets.only(top: SakSpace.xxl),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              : Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: SakSpace.gutter),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Have a trusted guardian scan this code with Scan QR on their phone.',
+                        textAlign: TextAlign.center,
+                        style: context.type.bodyMedium?.copyWith(color: c.inkSecondary),
                       ),
-                    ),
+                      const SizedBox(height: SakSpace.xl),
+                      Reveal(
+                        child: Semantics(
+                          label: 'Pairing QR code',
+                          image: true,
+                          child: Container(
+                            padding: const EdgeInsets.all(SakSpace.lg),
+                            decoration: BoxDecoration(
+                              // Always white: scanners read dark-on-light best.
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(SakRadius.sheet),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: c.accent.withValues(alpha: 0.14),
+                                  blurRadius: 32,
+                                  offset: const Offset(0, 12),
+                                ),
+                              ],
+                            ),
+                            child: QrImageView(
+                              data: payload,
+                              version: QrVersions.auto,
+                              size: 240.0,
+                              backgroundColor: Colors.white,
+                              eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF1C1013)),
+                              dataModuleStyle: const QrDataModuleStyle(
+                                dataModuleShape: QrDataModuleShape.square,
+                                color: Color(0xFF1C1013),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: SakSpace.xl),
+                      Reveal(
+                        index: 1,
+                        child: Column(
+                          children: [
+                            Text('Your Secure Node ID', style: context.type.labelMedium),
+                            const SizedBox(height: SakSpace.sm),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: SakSpace.lg, vertical: SakSpace.md),
+                              decoration: BoxDecoration(
+                                color: c.surface,
+                                borderRadius: BorderRadius.circular(SakRadius.control),
+                                border: Border.all(color: c.separator),
+                              ),
+                              child: MonoText(
+                                _nodeId ?? '',
+                                selectable: true,
+                                textAlign: TextAlign.center,
+                                style: context.type.titleLarge?.copyWith(letterSpacing: 2),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 40),
-                  const Text(
-                    'Have a trusted Guardian scan this code',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 20),
-                  // Render the QR Code
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        )
-                      ],
-                    ),
-                    child: QrImageView(
-                      data: _qrPayload!,
-                      version: QrVersions.auto,
-                      size: 250.0,
-                      backgroundColor: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-      ),
+                ),
+        ),
+      ],
     );
   }
 }
