@@ -41,6 +41,26 @@
  *                              transient data, into the authority's private
  *                              collection. Safe to retry.
  *   GET  /audit/:manifestHash  a clip's chain of custody
+ *   POST /pieces               {manifestHash, victimNodeId, fromNodeId, toNodeId,
+ *                              sealedShare, senderX25519, signature, share}:
+ *                              a guardian sends their key piece to a
+ *                              co-guardian. The ledger records the piece's
+ *                              hash (ForwardPiece checks both are the victim's
+ *                              guardians and the sender's Ed25519 signature);
+ *                              the sealed piece waits in the mailbox.
+ *   GET  /pieces/:nodeId       envelopes waiting for one guardian
+ *   POST /pieces/:nodeId/ack   {ids, signature}: the recipient, signing with
+ *                              their registered Ed25519 key, deletes envelopes
+ *                              they have stored
+ *   POST /device-setup/:deviceNodeId  {ownerNodeId, ownerEd25519, ownerX25519,
+ *                              issuedAt, sealed, signature}: a phone leaves its
+ *                              SOS device a sealed setup package (device.js)
+ *   GET  /device-setup/:deviceNodeId  the latest package, or {found: false}
+ *   POST /device-pieces        {manifestHash, victimNodeId, fromNodeId, toNodeId,
+ *                              sealedShare, senderX25519, signature, certificate,
+ *                              share}: an SOS device leaves a guardian their key
+ *                              piece of a clip it anchored; it waits in the
+ *                              same mailbox as forwarded pieces
  *
  * Times in records (anchoredAt) are the gateway's clock, not the ledger's;
  * blockNumber is the independent evidence of when a record was committed.
@@ -53,6 +73,8 @@ const path = require('path');
 const grpc = require('@grpc/grpc-js');
 const { connect, signers } = require('@hyperledger/fabric-gateway');
 const { common } = require('@hyperledger/fabric-protos');
+const { createMailbox, pieceHashOf } = require('./mailbox');
+const { createDeviceDesk } = require('./device');
 
 const ORGS_DIR = process.env.FABRIC_ORGS_DIR ||
   '\\\\wsl.localhost\\Ubuntu\\home\\sara_khurshida\\fabric\\fabric-samples\\test-network\\organizations';
@@ -69,6 +91,19 @@ const CONFIG = {
   tlsCertPath: path.join(ORG1, 'peers', 'peer0.org1.example.com', 'tls', 'ca.crt'),
 };
 const MAX_BODY_BYTES = 16 * 1024;
+
+// Forwarded key pieces wait here (git-ignored) until their recipient fetches them.
+const mailbox = createMailbox(process.env.GATEWAY_MAILBOX_DIR || path.join(__dirname, 'mailbox'));
+// SOS devices' setup packages wait here (git-ignored); see device.js.
+const deviceDesk = createDeviceDesk({
+  dir: process.env.GATEWAY_DEVICE_SETUP_DIR || path.join(__dirname, 'device-setup'),
+  ledger: {
+    getNode: (id) => evaluate('GetNode', id),
+    getGuardians: (id) => evaluate('GetGuardians', id),
+    verifyEvidence: (hash) => verify(hash),
+  },
+  mailbox,
+});
 
 // The gateway is reachable from the internet through the ngrok tunnel, so
 // every route except /health needs the shared API key in the X-Api-Key
@@ -209,6 +244,34 @@ function shareWithAuthority(body) {
   return submit('ShareWithAuthority', [manifestHash, authorityMsp, shareX, threshold, signature], { sealedShare });
 }
 
+/**
+ * Records a forwarded piece on the ledger, then leaves it in the
+ * recipient's mailbox. Only pieces the ledger accepted are stored.
+ */
+async function forwardPiece(body) {
+  const { manifestHash, victimNodeId, fromNodeId, toNodeId, sealedShare, senderX25519, signature, share } = body;
+  const pieceHash = pieceHashOf(sealedShare);
+  const record = await submit('ForwardPiece', [manifestHash, victimNodeId, fromNodeId, toNodeId, pieceHash, signature]);
+  return mailbox.put({
+    manifestHash: record.manifestHash,
+    victimNodeId: record.victimNodeId,
+    fromNodeId: record.fromNodeId,
+    toNodeId: record.toNodeId,
+    pieceHash,
+    sealedShare,
+    senderX25519: String(senderX25519 ?? ''),
+    signature: record.signature,
+    share: share && typeof share === 'object' ? share : {},
+    forwardedAt: record.forwardedAt,
+    blockNumber: record.blockNumber,
+  });
+}
+
+async function ackPieces(nodeId, body) {
+  const node = await evaluate('GetNode', nodeId);
+  return mailbox.ack(nodeId, body.ids, body.signature, node.found ? node.ed25519PublicKey : null);
+}
+
 async function verify(manifestHash) {
   const result = JSON.parse(utf8.decode(await contract.evaluateTransaction('VerifyEvidence', manifestHash)));
   if (result.found) result.blockNumber = await blockNumberOf(result.txId);
@@ -311,6 +374,18 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, await releaseShare(await readJson(req)));
     } else if (req.method === 'GET' && parts[0] === 'audit' && parts.length === 2) {
       send(res, 200, await evaluate('GetAuditTrail', parts[1]));
+    } else if (req.method === 'POST' && url.pathname === '/pieces') {
+      send(res, 200, await forwardPiece(await readJson(req)));
+    } else if (req.method === 'GET' && parts[0] === 'pieces' && parts.length === 2) {
+      send(res, 200, mailbox.list(parts[1]));
+    } else if (req.method === 'POST' && parts[0] === 'pieces' && parts.length === 3 && parts[2] === 'ack') {
+      send(res, 200, await ackPieces(parts[1], await readJson(req)));
+    } else if (req.method === 'POST' && parts[0] === 'device-setup' && parts.length === 2) {
+      send(res, 200, await deviceDesk.putSetup(parts[1], await readJson(req)));
+    } else if (req.method === 'GET' && parts[0] === 'device-setup' && parts.length === 2) {
+      send(res, 200, deviceDesk.getSetup(parts[1]));
+    } else if (req.method === 'POST' && url.pathname === '/device-pieces') {
+      send(res, 200, await deviceDesk.putPiece(await readJson(req)));
     } else {
       status = 404;
       send(res, 404, { error: 'Not found' });

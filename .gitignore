@@ -63,3 +63,5 @@ env/
 # Gateway API key and ngrok tunnel settings (step 8a)
 fabric/gateway/api-key.txt
 fabric/gateway/tunnel.txt
+fabric/gateway/mailbox/
+fabric/gateway/device-setup/

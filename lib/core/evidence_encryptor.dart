@@ -317,6 +317,13 @@ class EvidenceEncryptor {
     return _decryptFileWithKey(cipherPath, incidentKey);
   }
 
+  /// Like [decryptFile], for ciphertext already in memory (e.g. downloaded
+  /// from IPFS after the local copy was deleted).
+  static Future<Uint8List> decryptBytes(List<int> cipherBytes, String wrappedKeyB64) async {
+    final incidentKey = await unwrapIncidentKey(wrappedKeyB64);
+    return Uint8List.fromList(await AesGcm.with256bits().decrypt(_unpackSecretBox(cipherBytes), secretKey: incidentKey));
+  }
+
   /// Decrypts a `.enc` file from a guardian quorum's unsealed shares. A
   /// wrong or insufficient set of shares fails AES-GCM authentication.
   static Future<Uint8List> decryptFileWithShares({

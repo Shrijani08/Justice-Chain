@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'core/ai_service.dart';
 import 'core/identity_service.dart';
@@ -8,13 +7,9 @@ import 'core/protection_service.dart';
 import 'presentation/design/app_theme.dart';
 import 'presentation/disguise_gate.dart';
 import 'presentation/home_screen.dart';
-import 'presentation/registration_screen.dart';
+import 'presentation/onboarding_screen.dart';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'package:justice_chain/core/pinata_service.dart'; // Adjust this path if needed
 
 void main() async {
   // Fixes the isolate crash
@@ -47,31 +42,6 @@ class JusticeChainApp extends StatelessWidget {
 
   const JusticeChainApp({super.key, required this.isRegistered});
 
-  Future<void> testPinataUpload() async {
-    try {
-      print('1. Creating a secure dummy file...');
-      // Find a safe temporary folder on the phone
-      final directory = await getTemporaryDirectory();
-      final testFilePath = '${directory.path}/test_evidence.txt';
-
-      // Create a text file with a secret message
-      final file = File(testFilePath);
-      await file.writeAsString(
-        'This is a test distress signal for Justice-Chain. The vault is secure!',
-      );
-
-      print('2. Sending to IPFS...');
-      // Call the service we just built!
-      final cid = await PinataService.uploadToIPFS(testFilePath);
-      print('🎉 SUCCESS! Your file is on the decentralized web.');
-      print('🌐 View it here: https://ipfs.io/ipfs/$cid');
-    } on PinataUploadException catch (e) {
-      print('❌ Upload failed: $e');
-    } catch (e) {
-      print('❌ Error during test: $e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     // In disguise mode the recent-apps list shows "Calculator" too.
@@ -85,24 +55,10 @@ class JusticeChainApp extends StatelessWidget {
     return MaterialApp(
       title: title,
       debugShowCheckedModeBanner: false,
-      theme: buildSakTheme(Brightness.light),
-      darkTheme: buildSakTheme(Brightness.dark),
-      themeMode: ThemeMode.system,
-      home: isRegistered
-          ? Scaffold(
-              body: const MainSafetyScreen(),
-              // Debug-only IPFS smoke test. Never ship this in a release
-              // build: it's an unauthenticated upload trigger with no
-              // relation to the emergency flow.
-              floatingActionButton: kDebugMode
-                  ? FloatingActionButton.extended(
-                      onPressed: testPinataUpload,
-                      icon: const Icon(Icons.cloud_upload_rounded),
-                      label: const Text('Test IPFS'),
-                    )
-                  : null,
-            )
-          : const RegistrationScreen(),
+      // Dark Ember is the one appearance.
+      theme: buildSakTheme(),
+      themeMode: ThemeMode.dark,
+      home: isRegistered ? const MainSafetyScreen() : const OnboardingScreen(),
       builder: (context, child) => isRegistered ? DisguiseGate(child: child!) : child!,
     );
   }

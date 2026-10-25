@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../logic/guardian_manager.dart';
 import 'anchoring_service.dart';
+import 'device_link_service.dart';
 import 'evidence_encryptor.dart';
 import 'identity_service.dart';
 import 'mesh_service.dart';
@@ -30,6 +31,7 @@ class GuardianIncident {
     required this.threshold,
     required this.hasOwnShare,
     required this.hasLocalCopy,
+    this.forwardedFrom = const [],
   });
 
   final String manifestHash;
@@ -45,6 +47,9 @@ class GuardianIncident {
   final int threshold;
   final bool hasOwnShare;
   final bool hasLocalCopy;
+
+  /// Co-guardians who sent this phone their piece of the clip.
+  final List<String> forwardedFrom;
 
   bool get hasQuorum => shareCount >= threshold;
 }
@@ -127,6 +132,7 @@ class GuardianEvidenceService {
       threshold: _thresholdOf(shares),
       hasOwnShare: shares.any((s) => s['forwardedBy'] == null),
       hasLocalCopy: relay != null && File(relay['path'] as String).existsSync(),
+      forwardedFrom: shares.map((s) => s['forwardedBy']).whereType<String>().toSet().toList(),
     );
   }
 
@@ -185,8 +191,12 @@ class GuardianEvidenceService {
       actualHash == manifestHash ? 'SHA-256 $manifestHash' : 'expected $manifestHash, got $actualHash',
     ));
 
-    // 5. Victim's device signature over that hash.
-    checks.add(await _checkDeviceSignature(manifestHash, incident.victimNodeId));
+    // 5. Victim's device signature over that hash. A clip from her SOS
+    // device is signed by the device, which she certified as hers.
+    final sosDevice = await _certifiedSosDevice(manifestHash, incident.victimNodeId);
+    checks.add(sosDevice == null
+        ? await _checkDeviceSignature(manifestHash, incident.victimNodeId)
+        : await _checkSosDeviceSignature(manifestHash, sosDevice));
 
     // 6. On-chain record and block.
     String? anchorSummary;
@@ -201,7 +211,9 @@ class GuardianEvidenceService {
         cidMatches,
         cidMatches ? anchor.cid : 'chain has ${anchor.cid}, copy came from $cid',
       ));
-      checks.add(_checkSigner(anchor.signer, incident.victimNodeId));
+      checks.add(sosDevice == null
+          ? _checkSigner(anchor.signer, incident.victimNodeId)
+          : _checkSosDeviceSigner(anchor.signer, sosDevice));
 
       final block = await AnchoringService.findAnchorBlock(manifestHash);
       anchorSummary = 'Verified: ${describeAnchor(block, anchor)}';
@@ -259,6 +271,47 @@ class GuardianEvidenceService {
       ),
     );
     return VerificationCheck(label, ok, ok ? 'Ed25519 key saved at pairing' : 'Signature does not verify');
+  }
+
+  /// The owner certificate of the SOS device that recorded [manifestHash],
+  /// if its pieces carry one and it checks out against the victim's key
+  /// saved at pairing; null for clips recorded on her phone.
+  static Future<Map?> _certifiedSosDevice(String manifestHash, String victimNodeId) async {
+    final cert = _sharesFor(manifestHash).map((s) => s['deviceCertificate']).whereType<Map>().firstOrNull;
+    if (cert == null) return null;
+    final contact = GuardianManager.getAllContacts()[victimNodeId];
+    final victimKey = contact is Map ? contact['public_key'] as String? : null;
+    if (victimKey == null) return {...cert, 'certified': false};
+    final ok = await DeviceLinkService.verifyCertificate(cert, victimNodeId: victimNodeId, victimEd25519: victimKey);
+    return {...cert, 'certified': ok};
+  }
+
+  static Future<VerificationCheck> _checkSosDeviceSignature(String manifestHash, Map cert) async {
+    const label = "Signed by the victim's SOS device";
+    if (cert['certified'] != true) {
+      return const VerificationCheck(label, false, "The device's owner certificate doesn't check out");
+    }
+    final signatureB64 = _sharesFor(manifestHash).map((s) => s['signature']).whereType<String>().firstOrNull;
+    if (signatureB64 == null) return const VerificationCheck(label, null, 'Signature missing');
+    final ok = await Ed25519().verify(
+      utf8.encode(manifestHash),
+      signature: Signature(
+        base64Decode(signatureB64),
+        publicKey: SimplePublicKey(base64Decode(cert['deviceEd25519'] as String), type: KeyPairType.ed25519),
+      ),
+    );
+    return VerificationCheck(
+      label,
+      ok,
+      ok ? 'Device ${cert['deviceNodeId']}, certified by the victim' : 'Signature does not verify',
+    );
+  }
+
+  static VerificationCheck _checkSosDeviceSigner(String chainSigner, Map cert) {
+    const label = "On-chain signer is the victim's SOS device";
+    final expected = (cert['deviceAnchoringAddress'] as String).toLowerCase();
+    final ok = cert['certified'] == true && expected == chainSigner.toLowerCase();
+    return VerificationCheck(label, ok, ok ? chainSigner : 'expected $expected, chain has $chainSigner');
   }
 
   static VerificationCheck _checkSigner(String chainSigner, String victimNodeId) {

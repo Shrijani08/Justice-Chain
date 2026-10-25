@@ -70,7 +70,12 @@ class _FakeGateway {
         for (final g in body['guardianNodeIds'] as List) {
           if (!nodes.containsKey(g)) return _json({'error': 'Guardian $g is not registered'}, 400);
         }
-        guardians[victim] = {'victimNodeId': victim, 'guardians': body['guardianNodeIds'], 'sequence': seq};
+        guardians[victim] = {
+          'victimNodeId': victim,
+          'guardians': body['guardianNodeIds'],
+          'sequence': seq,
+          'signature': body['signature'],
+        };
         return _json(guardians[victim]!);
       case '/releases':
         if (failNextRelease) {
@@ -222,6 +227,19 @@ void main() {
 
       await AuthorityService.syncGuardians();
       expect(gateway.posts['/guardians']!.single['sequence'], 6);
+    });
+
+    test('a list from before the ledger kept signatures is signed again, once', () async {
+      const a = 'aaaaaaaaaaaaaaaa';
+      await addGuardianContact(a);
+      gateway.nodes[a] = {'nodeId': a};
+      gateway.guardians[myNodeId] = {'victimNodeId': myNodeId, 'guardians': [a], 'sequence': 2};
+
+      await AuthorityService.syncGuardians();
+      await AuthorityService.syncGuardians();
+      final sent = gateway.posts['/guardians']!.single;
+      expect(sent['sequence'], 3);
+      expect(sent['guardianNodeIds'], [a]);
     });
 
     test('removing every guardian clears the list on the ledger', () async {

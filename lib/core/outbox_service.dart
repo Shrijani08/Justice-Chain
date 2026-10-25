@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'authority_service.dart';
+import 'co_guardian_service.dart';
 import 'evidence_vault_service.dart';
 import 'mesh_service.dart';
 
@@ -29,6 +30,7 @@ class OutboxService {
   static const String jobMeshRelay = 'mesh_relay';
   static const String jobRelayUpload = 'relay_upload';
   static const String jobShareForward = 'share_forward';
+  static const String jobPieceMailbox = 'piece_mailbox';
   static const String jobRegisterNode = 'ledger_register';
   static const String jobGuardianSync = 'ledger_guardians';
   static const String jobAuthorityShare = 'authority_share';
@@ -146,6 +148,14 @@ class OutboxService {
         {'recordKey': manifestHash},
       );
 
+  /// Guardian side: send this phone's piece of a clip to a co-guardian
+  /// through the gateway's mailbox (no pairing or nearness needed).
+  static Future<void> enqueuePieceMailbox(String manifestHash, String toNodeId) => enqueue(
+        '$jobPieceMailbox:$manifestHash:$toNodeId',
+        jobPieceMailbox,
+        {'recordKey': manifestHash, 'toNodeId': toNodeId},
+      );
+
   static Future<void> enqueueShareForward(String manifestHash, String toNodeId) =>
       enqueue(
         '$jobShareForward:$manifestHash:$toNodeId',
@@ -160,7 +170,8 @@ class OutboxService {
     final ids = _box.keys.cast<String>().where((id) {
       final isOutbound = id.startsWith('$jobKeyShare:') ||
           id.startsWith('$jobMeshRelay:') ||
-          id.startsWith('$jobShareForward:');
+          id.startsWith('$jobShareForward:') ||
+          id.startsWith('$jobPieceMailbox:');
       return isOutbound && id.endsWith(':$nodeId');
     }).toList();
     await _box.deleteAll(ids);
@@ -272,6 +283,8 @@ class OutboxService {
         return EvidenceVaultService.uploadRelayedClip(recordKey);
       case jobShareForward:
         return MeshService.forwardShare(recordKey, payload['toNodeId'] as String);
+      case jobPieceMailbox:
+        return CoGuardianService.forwardViaMailbox(recordKey, payload['toNodeId'] as String);
       default:
         throw StateError('Unknown outbox job type: $type');
     }

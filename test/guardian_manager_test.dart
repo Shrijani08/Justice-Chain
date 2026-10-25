@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -152,7 +153,7 @@ void main() {
       expect(find.textContaining('ID aaaa…2222'), findsOneWidget);
       expect(find.textContaining("Can't hold key pieces"), findsOneWidget);
       // Only one of the two can hold keys, so the warning still shows.
-      expect(find.textContaining('You have 1 that can hold one'), findsOneWidget);
+      expect(find.text('1 of 2 can hold key pieces'), findsOneWidget);
     });
 
     testWidgets('turning on single-guardian mode asks first; Cancel leaves it off', (tester) async {
@@ -160,7 +161,8 @@ void main() {
       await pump(tester);
       expect(find.textContaining('Add at least 2 guardians'), findsOneWidget);
 
-      await tester.tap(find.byType(Switch));
+      // The single-guardian switch; the police guardian switch comes after it.
+      await tester.tap(find.byType(CupertinoSwitch).first);
       await tester.pumpAndSettle();
       expect(find.text('Let one guardian open recordings?'), findsOneWidget);
       expect(find.textContaining('stay that way'), findsOneWidget);
@@ -180,7 +182,7 @@ void main() {
 
       expect(find.textContaining('Single-guardian mode is on'), findsOneWidget);
       expect(find.textContaining('Add at least'), findsNothing);
-      expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isTrue);
+      expect(tester.widget<CupertinoSwitch>(find.byType(CupertinoSwitch).first).value, isTrue);
     });
 
     testWidgets('no warning with two guardians that can hold keys', (tester) async {

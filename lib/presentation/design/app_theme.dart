@@ -4,57 +4,62 @@ import 'package:flutter/services.dart';
 
 import 'tokens.dart';
 
-/// Builds the app theme for one appearance. Light and dark follow the
-/// system setting; there is no in-app switch.
-ThemeData buildSakTheme(Brightness brightness) {
-  final c = brightness == Brightness.dark ? SakColors.dark : SakColors.light;
-  final isDark = brightness == Brightness.dark;
+/// The Dark Ember theme. [brightness] is accepted for older callers; the
+/// app has one appearance.
+ThemeData buildSakTheme([Brightness brightness = Brightness.dark]) {
+  const c = SakColors.ember;
 
-  final scheme = ColorScheme(
-    brightness: brightness,
-    primary: c.accent,
-    onPrimary: c.onAccent,
-    primaryContainer: c.accentSoft,
-    onPrimaryContainer: c.ink,
-    secondary: c.accent,
-    onSecondary: c.onAccent,
-    secondaryContainer: c.accentSoft,
-    onSecondaryContainer: c.ink,
-    error: c.danger,
-    onError: c.onDanger,
-    errorContainer: c.dangerSoft,
-    onErrorContainer: c.ink,
-    surface: c.surface,
-    onSurface: c.ink,
-    onSurfaceVariant: c.inkSecondary,
-    surfaceContainerLowest: c.background,
-    surfaceContainerLow: c.surface,
-    surfaceContainer: c.surface,
-    surfaceContainerHigh: c.surfaceRaised,
-    surfaceContainerHighest: c.surfaceRaised,
-    outline: c.inkTertiary,
-    outlineVariant: c.separator,
+  const scheme = ColorScheme(
+    brightness: Brightness.dark,
+    primary: Ember.rose,
+    onPrimary: Ember.onPearl,
+    primaryContainer: Color(0xFF3D1C24),
+    onPrimaryContainer: Ember.ink,
+    secondary: Ember.rose,
+    onSecondary: Ember.onPearl,
+    error: Ember.alertText,
+    onError: Color(0xFFFFFFFF),
+    surface: Color(0xFF1A1214),
+    onSurface: Ember.ink,
+    onSurfaceVariant: Ember.ink2,
+    surfaceContainerLowest: Ember.ground,
+    surfaceContainerLow: Color(0xFF1A1214),
+    surfaceContainer: Color(0xFF1E1518),
+    surfaceContainerHigh: Color(0xFF24171B),
+    surfaceContainerHighest: Color(0xFF2A1C20),
+    outline: Ember.ink3,
+    outlineVariant: Ember.hairline,
   );
 
-  // Size-specific tracking: tighter as text grows, slightly open when small.
+  TextStyle body(double size, double height, FontWeight w, {Color color = Ember.ink, double spacing = 0}) =>
+      TextStyle(fontFamily: SakFont.body, fontSize: size, height: height / size, fontWeight: w, letterSpacing: spacing, color: color);
+  TextStyle display(double size, double height, double spacing) => TextStyle(
+        fontFamily: SakFont.display,
+        fontSize: size,
+        height: height / size,
+        fontWeight: FontWeight.w700,
+        letterSpacing: spacing,
+        color: Ember.ink,
+      );
+
+  // The canvas's scale: hero 42, large title 34, title 22, headline 17,
+  // body 15–17, footnote 13, caption 12.
   final textTheme = TextTheme(
-    displaySmall: TextStyle(fontSize: 34, height: 41 / 34, fontWeight: FontWeight.w700, letterSpacing: -0.6, color: c.ink),
-    headlineMedium: TextStyle(fontSize: 28, height: 34 / 28, fontWeight: FontWeight.w700, letterSpacing: -0.4, color: c.ink),
-    headlineSmall: TextStyle(fontSize: 24, height: 30 / 24, fontWeight: FontWeight.w700, letterSpacing: -0.3, color: c.ink),
-    titleLarge: TextStyle(fontSize: 20, height: 25 / 20, fontWeight: FontWeight.w600, letterSpacing: -0.2, color: c.ink),
-    titleMedium: TextStyle(fontSize: 17, height: 22 / 17, fontWeight: FontWeight.w600, letterSpacing: -0.2, color: c.ink),
-    titleSmall: TextStyle(fontSize: 15, height: 20 / 15, fontWeight: FontWeight.w600, letterSpacing: -0.1, color: c.ink),
-    bodyLarge: TextStyle(fontSize: 17, height: 23 / 17, fontWeight: FontWeight.w400, letterSpacing: -0.2, color: c.ink),
-    bodyMedium: TextStyle(fontSize: 15, height: 21 / 15, fontWeight: FontWeight.w400, letterSpacing: -0.1, color: c.ink),
-    bodySmall: TextStyle(fontSize: 13, height: 18 / 13, fontWeight: FontWeight.w400, letterSpacing: 0, color: c.inkSecondary),
-    labelLarge: TextStyle(fontSize: 17, height: 22 / 17, fontWeight: FontWeight.w600, letterSpacing: -0.2, color: c.ink),
-    labelMedium: TextStyle(fontSize: 13, height: 18 / 13, fontWeight: FontWeight.w600, letterSpacing: 0, color: c.inkSecondary),
-    labelSmall: TextStyle(fontSize: 12, height: 16 / 12, fontWeight: FontWeight.w500, letterSpacing: 0.2, color: c.inkSecondary),
+    displayLarge: display(42, 46, -1.1),
+    displayMedium: display(34, 38, -0.8),
+    displaySmall: display(32, 36, -0.8),
+    headlineMedium: display(28, 32, -0.6),
+    headlineSmall: display(22, 27, -0.3),
+    titleLarge: body(20, 25, FontWeight.w600),
+    titleMedium: body(17, 22, FontWeight.w600),
+    titleSmall: body(15, 20, FontWeight.w600),
+    bodyLarge: body(16, 22, FontWeight.w400),
+    bodyMedium: body(15, 21, FontWeight.w400),
+    bodySmall: body(13, 18, FontWeight.w400, color: Ember.ink2),
+    labelLarge: body(17, 22, FontWeight.w700),
+    labelMedium: body(13, 18, FontWeight.w600, color: Ember.ink2),
+    labelSmall: body(12, 16, FontWeight.w500, color: Ember.ink2),
   );
-
-  final controlShape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(SakRadius.control));
-  const controlPadding = EdgeInsets.symmetric(horizontal: 20, vertical: 16);
-  const controlSize = Size(64, 52);
 
   OutlineInputBorder fieldBorder(Color color, [double width = 1]) => OutlineInputBorder(
         borderRadius: BorderRadius.circular(SakRadius.control),
@@ -63,132 +68,100 @@ ThemeData buildSakTheme(Brightness brightness) {
 
   return ThemeData(
     useMaterial3: true,
-    brightness: brightness,
+    brightness: Brightness.dark,
+    fontFamily: SakFont.body,
     colorScheme: scheme,
-    scaffoldBackgroundColor: c.background,
-    canvasColor: c.background,
+    scaffoldBackgroundColor: Ember.ground,
+    canvasColor: Ember.ground,
     textTheme: textTheme,
-    extensions: [c],
-    splashFactory: NoSplash.splashFactory, // press feedback is a scale + tint, not a ripple
-    highlightColor: c.ink.withValues(alpha: 0.06),
+    extensions: const [c],
+    splashFactory: NoSplash.splashFactory, // press feedback is a scale, not a ripple
+    highlightColor: const Color(0x0FFFFFFF),
     // Slide-in pages that can be swiped back from the edge, interruptibly.
     pageTransitionsTheme: const PageTransitionsTheme(
       builders: {
         TargetPlatform.android: CupertinoPageTransitionsBuilder(),
         TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
       },
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: c.background,
-      foregroundColor: c.ink,
+      backgroundColor: Colors.transparent,
+      foregroundColor: Ember.ink,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: true,
       titleTextStyle: textTheme.titleMedium,
-      systemOverlayStyle: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      systemOverlayStyle: SystemUiOverlayStyle.light,
     ),
-    iconTheme: IconThemeData(color: c.ink, size: 22),
-    dividerTheme: DividerThemeData(color: c.separator, thickness: 0.5, space: 0.5),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        backgroundColor: c.accent,
-        foregroundColor: c.onAccent,
-        minimumSize: controlSize,
-        padding: controlPadding,
-        shape: controlShape,
-        textStyle: textTheme.labelLarge,
-      ),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: c.accent,
-        foregroundColor: c.onAccent,
-        elevation: 0,
-        minimumSize: controlSize,
-        padding: controlPadding,
-        shape: controlShape,
-        textStyle: textTheme.labelLarge,
-      ),
-    ),
-    outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(
-        foregroundColor: c.accent,
-        minimumSize: controlSize,
-        padding: controlPadding,
-        shape: controlShape,
-        side: BorderSide(color: c.separator),
-        textStyle: textTheme.labelLarge,
-      ),
+    iconTheme: const IconThemeData(color: Ember.ink, size: 22),
+    dividerTheme: const DividerThemeData(color: Ember.hairline, thickness: 1, space: 1),
+    textSelectionTheme: const TextSelectionThemeData(
+      cursorColor: Ember.rose,
+      selectionColor: Color(0x55F2A7B5),
+      selectionHandleColor: Ember.rose,
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: c.accent,
+        foregroundColor: Ember.rose,
         minimumSize: const Size(44, 44),
-        shape: controlShape,
         textStyle: textTheme.titleSmall,
       ),
     ),
-    floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: c.surfaceRaised,
-      foregroundColor: c.ink,
-      elevation: 2,
-      shape: const StadiumBorder(),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: Ember.ink,
+        foregroundColor: Ember.onPearl,
+        minimumSize: const Size(64, 48),
+        shape: const StadiumBorder(),
+        textStyle: textTheme.titleSmall,
+      ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: c.surface,
+      fillColor: Ember.glass,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      labelStyle: textTheme.bodyLarge?.copyWith(color: c.inkSecondary),
-      floatingLabelStyle: textTheme.bodyMedium?.copyWith(color: c.accent, fontWeight: FontWeight.w600),
-      hintStyle: textTheme.bodyLarge?.copyWith(color: c.inkTertiary),
-      prefixIconColor: c.inkSecondary,
-      errorStyle: textTheme.bodySmall?.copyWith(color: c.danger),
-      border: fieldBorder(c.separator),
-      enabledBorder: fieldBorder(c.separator),
-      focusedBorder: fieldBorder(c.accent, 2),
-      errorBorder: fieldBorder(c.danger),
-      focusedErrorBorder: fieldBorder(c.danger, 2),
-    ),
-    switchTheme: SwitchThemeData(
-      thumbColor: WidgetStateProperty.all(Colors.white),
-      trackColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.selected) ? c.success : c.separator,
-      ),
-      trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-    ),
-    listTileTheme: ListTileThemeData(
-      iconColor: c.inkSecondary,
-      textColor: c.ink,
-      titleTextStyle: textTheme.bodyLarge,
-      subtitleTextStyle: textTheme.bodySmall,
-      contentPadding: const EdgeInsets.symmetric(horizontal: SakSpace.lg),
+      labelStyle: textTheme.bodyLarge?.copyWith(color: Ember.ink2),
+      floatingLabelStyle: textTheme.bodyMedium?.copyWith(color: Ember.rose, fontWeight: FontWeight.w600),
+      hintStyle: textTheme.bodyMedium?.copyWith(color: Ember.ink3),
+      errorStyle: textTheme.bodySmall?.copyWith(color: Ember.alertText),
+      border: fieldBorder(const Color(0x24FFFFFF)),
+      enabledBorder: fieldBorder(const Color(0x24FFFFFF)),
+      focusedBorder: fieldBorder(Ember.rose, 1.5),
+      errorBorder: fieldBorder(Ember.alertText),
+      focusedErrorBorder: fieldBorder(Ember.alertText, 1.5),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: c.surfaceRaised,
+      backgroundColor: const Color(0xFF221A1D),
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(SakRadius.sheet)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(SakRadius.card),
+        side: const BorderSide(color: Ember.glassBorder),
+      ),
       titleTextStyle: textTheme.titleLarge,
-      contentTextStyle: textTheme.bodyMedium?.copyWith(color: c.inkSecondary),
+      contentTextStyle: textTheme.bodyMedium?.copyWith(color: Ember.ink2),
     ),
-    popupMenuTheme: PopupMenuThemeData(
-      color: c.surfaceRaised,
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(SakRadius.control)),
+      modalBarrierColor: Color(0x8C000000),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      backgroundColor: isDark ? c.surfaceRaised : c.ink,
-      contentTextStyle: textTheme.bodyMedium?.copyWith(color: isDark ? c.ink : c.surface),
-      actionTextColor: c.accentSoft,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(SakRadius.control)),
+      backgroundColor: const Color(0xFF2A1C20),
+      contentTextStyle: textTheme.bodyMedium,
+      actionTextColor: Ember.rose,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(SakRadius.control),
+        side: const BorderSide(color: Ember.glassBorder),
+      ),
       insetPadding: const EdgeInsets.fromLTRB(SakSpace.lg, 0, SakSpace.lg, SakSpace.lg),
     ),
-    progressIndicatorTheme: ProgressIndicatorThemeData(
-      color: c.accent,
-      linearTrackColor: c.separator,
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
+      color: Ember.rose,
+      linearTrackColor: Color(0x1AFFFFFF),
+      circularTrackColor: Color(0x1AFFFFFF),
     ),
-    cupertinoOverrideTheme: CupertinoThemeData(primaryColor: c.accent, brightness: brightness),
+    cupertinoOverrideTheme: const CupertinoThemeData(primaryColor: Ember.rose, brightness: Brightness.dark),
   );
 }

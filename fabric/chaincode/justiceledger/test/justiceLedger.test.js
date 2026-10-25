@@ -322,12 +322,16 @@ test('a phone registers its node ID and keys, signed by both of its keys', async
   const ctx = makeCtx();
   const phone = makePhone('victim');
   const record = JSON.parse(await register(ctx, phone));
+  const payload = registerPayload(phone);
   assert.deepEqual(record, {
     nodeId: phone.nodeId,
     ed25519PublicKey: phone.edPub,
     x25519PublicKey: phone.xPub,
     anchoringAddress: phone.address,
     registeredAt: 1791400000,
+    // Kept so phones can check the keys themselves.
+    ed25519Signature: phone.edSign(payload),
+    anchoringSignature: phone.sign(payload),
   });
   assert.equal(ctx.events[0].name, 'NodeRegistered');
   assert.deepEqual(JSON.parse(await ledger.GetNode(ctx, phone.nodeId)), { found: true, ...record });
@@ -387,6 +391,33 @@ test('the victim sets guardians with a growing sequence, signed by their anchori
 });
 
 /** A registered victim with an anchored clip, and SimPolice registered as an authority. */
+test('a registration from before signatures were kept gains them when the phone registers again', async () => {
+  const ctx = makeCtx();
+  const phone = makePhone('victim');
+  const key = ctx.stub.createCompositeKey('node', [phone.nodeId]);
+  const old = {
+    nodeId: phone.nodeId, ed25519PublicKey: phone.edPub, x25519PublicKey: phone.xPub,
+    anchoringAddress: phone.address, registeredAt: 1791300000,
+  };
+  await ctx.stub.putState(key, Buffer.from(JSON.stringify(old)));
+
+  const record = JSON.parse(await register(ctx, phone));
+  assert.equal(record.registeredAt, 1791300000); // the first registration still stands
+  assert.equal(record.ed25519Signature, phone.edSign(registerPayload(phone)));
+  assert.deepEqual(JSON.parse(await ledger.GetNode(ctx, phone.nodeId)), { found: true, ...record });
+});
+
+test("the guardian list keeps the victim's signature, so guardians can check it themselves", async () => {
+  const ctx = makeCtx();
+  const [victim, g1] = ['victim', 'g1'].map(makePhone);
+  for (const p of [victim, g1]) await register(ctx, p);
+  const signature = victim.sign(guardiansPayload(victim, 1, [g1.nodeId]));
+  await ledger.SetGuardians(ctx, victim.nodeId, JSON.stringify([g1.nodeId]), '1', signature);
+  const list = JSON.parse(await ledger.GetGuardians(ctx, victim.nodeId));
+  assert.equal(list.signature, signature);
+  assert.equal(list.guardians.join(','), g1.nodeId);
+});
+
 async function sharingSetup() {
   const world = { state: new Map(), privateData: new Map() };
   const gateway = makeCtx({ world });
@@ -670,4 +701,49 @@ test('the audit trail records shared, requested, released and opened, readable b
   assert.equal(trail[3].detail.note, 'Viewed in the officer portal');
 
   await assert.rejects(ledger.GetAuditTrail(as(OFFICER), HASH), /supervisor may do this/);
+});
+
+function forwardPayload(hash, victim, from, to, pieceHash) {
+  return `justice-chain/forward-piece/v1|${hash}|${victim.nodeId}|${from.nodeId}|${to.nodeId}|${pieceHash}`;
+}
+
+test('a guardian forwards their piece to a co-guardian: recorded once, in the audit trail, hash only', async () => {
+  const { world, as, victim, g1, g2 } = await custodySetup();
+  const pieceHash = 'cd'.repeat(32);
+  const signature = g1.edSign(forwardPayload(HASH, victim, g1, g2, pieceHash));
+  const forward = () => ledger.ForwardPiece(as(), HASH, victim.nodeId, g1.nodeId, g2.nodeId, pieceHash, signature);
+
+  const record = JSON.parse(await forward());
+  assert.equal(record.fromNodeId, g1.nodeId);
+  assert.equal(record.toNodeId, g2.nodeId);
+  assert.equal(record.pieceHash, pieceHash);
+  assert.deepEqual(JSON.parse(await forward()), record); // a retry adds nothing
+
+  const trail = JSON.parse(await ledger.GetAuditTrail(as(), HASH)).filter((e) => e.event === 'forwarded');
+  assert.equal(trail.length, 1);
+  assert.deepEqual(trail[0].actor, { nodeId: g1.nodeId, role: 'guardian' });
+  assert.deepEqual(trail[0].detail, { toNodeId: g2.nodeId, pieceHash });
+  assert.equal([...world.state.keys()].some((k) => k.includes('pieceForward')), true);
+});
+
+test("a forward is refused unless both are the victim's guardians and the sender signed it", async () => {
+  const { as, victim, g1, g2, stranger } = await custodySetup();
+  const pieceHash = 'cd'.repeat(32);
+  const tryForward = (from, to, signer = from, hash = pieceHash) => ledger.ForwardPiece(
+    as(), HASH, victim.nodeId, from.nodeId, to.nodeId, hash, signer.edSign(forwardPayload(HASH, victim, from, to, hash)));
+
+  await assert.rejects(tryForward(g1, stranger), /Both guardians must be on the victim's guardian list/);
+  await assert.rejects(tryForward(stranger, g1), /Both guardians must be on the victim's guardian list/);
+  await assert.rejects(tryForward(g1, g2, g2), /not signed by the sender/);
+  await assert.rejects(tryForward(g1, g1), /to themselves/);
+  await assert.rejects(
+    ledger.ForwardPiece(as(), HASH, victim.nodeId, g1.nodeId, g2.nodeId, pieceHash,
+      g1.edSign(forwardPayload(HASH, victim, g1, g2, 'ef'.repeat(32)))),
+    /not signed by the sender/,
+  );
+  await assert.rejects(
+    ledger.ForwardPiece(as({ msp: 'Org2MSP' }), HASH, victim.nodeId, g1.nodeId, g2.nodeId, pieceHash,
+      g1.edSign(forwardPayload(HASH, victim, g1, g2, pieceHash))),
+    /Only Org1MSP may forward/,
+  );
 });

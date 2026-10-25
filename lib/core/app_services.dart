@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:logger/logger.dart';
 import 'authority_service.dart';
+import 'co_guardian_service.dart';
+import 'device_link_service.dart';
 import 'evidence_vault_service.dart';
 import 'identity_service.dart';
 import 'mesh_service.dart';
@@ -44,5 +48,16 @@ class AppServices {
       logger.e("Resuming pending evidence work failed: $e");
     }
     await OutboxService.start();
+    // Key pieces co-guardians and SOS devices sent while the app was closed.
+    unawaited(CoGuardianService.fetchMailbox().catchError((Object e) {
+      logger.w("Checking the key-piece mailbox failed: $e");
+      return 0;
+    }));
+    // Keeps a linked SOS device's guardian list current.
+    if (AuthorityService.ledgerFeaturesEnabled) {
+      unawaited(DeviceLinkService.sendSetup().catchError((Object e) {
+        logger.w("Updating the SOS device failed: $e");
+      }));
+    }
   }
 }

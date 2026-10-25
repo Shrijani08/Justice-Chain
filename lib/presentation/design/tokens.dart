@@ -2,11 +2,85 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Sakshya's colour roles. One colour means one thing:
-/// [accent] is the brand (wine), [danger] is SOS and recording only,
-/// [success] is sealed or verified, [warning] is "needs your attention".
-///
-/// Contrast figures are against [surface] in the same appearance.
+/// Dark Ember: near-black ground lit by wine and plum glows, frosted
+/// glass panels, one ember gradient for SOS. Values are the approved
+/// canvas's, one for one. The app is dark only.
+abstract final class Ember {
+  /// Screen grounds. [home] is the deeper one behind Home and onboarding.
+  static const ground = Color(0xFF0A0708);
+  static const home = Color(0xFF070506);
+  static const black = Color(0xFF000000);
+
+  static const ink = Color(0xFFF4ECEE); // 17.9:1 on ground
+  static const ink2 = Color(0xA8F4ECEE); // 66%, 7.6:1
+  static const ink3 = Color(0x8CF4ECEE); // 55%, captions only
+  static const onPearl = Color(0xFF1A0B10);
+
+  /// Glass: white 6% with a 12% hairline.
+  static const glass = Color(0x0FFFFFFF);
+  static const glassBorder = Color(0x1FFFFFFF);
+  static const hairline = Color(0x12FFFFFF);
+
+  static const emberStart = Color(0xFF8E1B32);
+  static const emberEnd = Color(0xFF5A0F22);
+  static const emberEdge = Color(0x2EFF8CA0);
+  static const destructive = Color(0xFF8E1B32);
+
+  static const rose = Color(0xFFF2A7B5); // links, focus
+  static const roseSoft = Color(0xFFFFC6D0);
+  static const blush = Color(0xFFD99AAB);
+  static const sealed = Color(0xFF5BD6A0);
+  static const attention = Color(0xFFF0B44C);
+  static const alarm = Color(0xFFE5484D);
+  static const alertText = Color(0xFFFF7A88);
+
+  /// Glow tints laid behind content.
+  static const wineGlow = Color(0xFF5A1424);
+  static const deepWine = Color(0xFF3E0E1C);
+  static const plumGlow = Color(0xFF3B1C3F);
+  static const nightPlum = Color(0xFF24112A);
+
+  static const emberGradient = LinearGradient(
+    begin: Alignment(-1, -0.18),
+    end: Alignment(1, 0.18),
+    colors: [emberStart, emberEnd],
+  );
+
+  static const pearlGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFFFFFFFF), Color(0xFFF2D7DC)],
+  );
+
+  /// The softer pearl used on onboarding's Next pill.
+  static const pearlSoftGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFFF4ECEE), Color(0xFFE3C7CE)],
+  );
+
+  /// Avatar fills, picked by name so a person keeps their colour.
+  static const avatarGradients = [
+    [Color(0xFFFF8A5B), Color(0xFFC2185B)],
+    [Color(0xFF8E2DE2), Color(0xFF4A1F7A)],
+    [Color(0xFF7A2E40), Color(0xFF3A1320)],
+    [Color(0xFFFF8A5B), Color(0xFF8A3B2B)],
+    [Color(0xFF4E2A5E), Color(0xFF24132E)],
+  ];
+
+  static List<Color> avatarFor(String name) =>
+      avatarGradients[name.isEmpty ? 0 : name.codeUnits.fold<int>(0, (a, b) => a + b) % avatarGradients.length];
+}
+
+/// Font families bundled in assets/fonts.
+abstract final class SakFont {
+  static const body = 'Inter';
+  static const display = 'InterTight';
+  static const mono = 'JetBrainsMono';
+}
+
+/// The colour roles older code reads through `context.sak`. They map onto
+/// the Ember palette; there is one appearance.
 @immutable
 class SakColors extends ThemeExtension<SakColors> {
   const SakColors({
@@ -47,73 +121,35 @@ class SakColors extends ThemeExtension<SakColors> {
   final Color warning;
   final Color warningSoft;
 
-  static const light = SakColors(
-    background: Color(0xFFF6F1F2),
-    surface: Color(0xFFFFFFFF),
-    surfaceRaised: Color(0xFFFFFFFF),
-    separator: Color(0xFFE6DCDE),
-    ink: Color(0xFF1C1013), // 18.6:1
-    inkSecondary: Color(0xFF6E5A5F), // 6.4:1
-    inkTertiary: Color(0xFF8C7A7E), // 4.1:1, icons and large text only
-    accent: Color(0xFF7A1F33), // 10.1:1
-    onAccent: Color(0xFFFFFFFF),
-    accentSoft: Color(0xFFF7D6DC),
-    danger: Color(0xFFD92D3A), // white on it 4.8:1
+  static const ember = SakColors(
+    background: Ember.ground,
+    surface: Color(0xFF1A1214),
+    surfaceRaised: Color(0xFF24171B),
+    separator: Ember.hairline,
+    ink: Ember.ink,
+    inkSecondary: Ember.ink2,
+    inkTertiary: Ember.ink3,
+    accent: Ember.rose,
+    onAccent: Ember.onPearl,
+    accentSoft: Color(0x29F2A7B5),
+    danger: Ember.emberStart,
     onDanger: Color(0xFFFFFFFF),
-    dangerSoft: Color(0xFFFBE3E4),
-    success: Color(0xFF1E7A4C), // 5.6:1
-    successSoft: Color(0xFFDDF1E6),
-    warning: Color(0xFF9A5600), // 5.3:1
-    warningSoft: Color(0xFFFCEBD3),
+    dangerSoft: Color(0x388E1B32),
+    success: Ember.sealed,
+    successSoft: Color(0x265BD6A0),
+    warning: Ember.attention,
+    warningSoft: Color(0x1FF0B44C),
   );
 
-  static const dark = SakColors(
-    background: Color(0xFF110A0C),
-    surface: Color(0xFF1E1416),
-    surfaceRaised: Color(0xFF2A1D20),
-    separator: Color(0xFF3A2B2F),
-    ink: Color(0xFFF6EDEF), // 16.0:1
-    inkSecondary: Color(0xFFB9A6AA), // 7.8:1
-    inkTertiary: Color(0xFF8E7B80), // 4.4:1
-    accent: Color(0xFFF2A7B5), // 9.6:1
-    onAccent: Color(0xFF3A0B16),
-    accentSoft: Color(0xFF3D1C24),
-    danger: Color(0xFFE5484D), // white on it 3.9:1, bold 17 pt labels only
-    onDanger: Color(0xFFFFFFFF),
-    dangerSoft: Color(0xFF3F1A1D),
-    success: Color(0xFF4CC38A), // 8.4:1
-    successSoft: Color(0xFF15301F),
-    warning: Color(0xFFF0B44C), // 9.9:1
-    warningSoft: Color(0xFF35260E),
-  );
+  // Kept so callers written for two appearances still compile.
+  static const light = ember;
+  static const dark = ember;
 
   @override
   SakColors copyWith() => this;
 
   @override
-  SakColors lerp(ThemeExtension<SakColors>? other, double t) {
-    if (other is! SakColors) return this;
-    Color l(Color a, Color b) => Color.lerp(a, b, t)!;
-    return SakColors(
-      background: l(background, other.background),
-      surface: l(surface, other.surface),
-      surfaceRaised: l(surfaceRaised, other.surfaceRaised),
-      separator: l(separator, other.separator),
-      ink: l(ink, other.ink),
-      inkSecondary: l(inkSecondary, other.inkSecondary),
-      inkTertiary: l(inkTertiary, other.inkTertiary),
-      accent: l(accent, other.accent),
-      onAccent: l(onAccent, other.onAccent),
-      accentSoft: l(accentSoft, other.accentSoft),
-      danger: l(danger, other.danger),
-      onDanger: l(onDanger, other.onDanger),
-      dangerSoft: l(dangerSoft, other.dangerSoft),
-      success: l(success, other.success),
-      successSoft: l(successSoft, other.successSoft),
-      warning: l(warning, other.warning),
-      warningSoft: l(warningSoft, other.warningSoft),
-    );
-  }
+  SakColors lerp(ThemeExtension<SakColors>? other, double t) => this;
 }
 
 /// Spacing on a 4 pt grid.
@@ -130,16 +166,18 @@ abstract final class SakSpace {
 }
 
 abstract final class SakRadius {
-  static const double control = 14;
-  static const double card = 20;
-  static const double sheet = 28;
+  static const double control = 18;
+  static const double group = 22;
+  static const double card = 26;
+  static const double sheet = 32;
+  static const double pill = 999;
 }
 
 /// Monospace for hashes, IDs and recovery codes: they are read character
 /// by character, so every glyph gets the same width.
 abstract final class SakMono {
-  static const String family = 'monospace';
-  static const List<String> fallback = ['RobotoMono', 'Menlo', 'Courier'];
+  static const String family = SakFont.mono;
+  static const List<String> fallback = ['monospace', 'RobotoMono'];
 }
 
 /// Motion. Everything settles on a critically damped spring (no overshoot):
@@ -147,9 +185,12 @@ abstract final class SakMono {
 abstract final class SakMotion {
   static const Duration quick = Duration(milliseconds: 180);
   static const Duration standard = Duration(milliseconds: 340);
-  static const Duration slow = Duration(milliseconds: 560);
+  static const Duration slow = Duration(milliseconds: 600);
 
   static const Curve spring = _CriticalSpring();
+
+  /// The canvas's cubic-bezier(.2,.9,.3,1), used for entrances.
+  static const Curve enter = Cubic(0.2, 0.9, 0.3, 1);
 
   /// Respect the system "remove animations" setting: callers get zero
   /// duration and fall back to a plain cross-fade or no motion.
@@ -175,13 +216,7 @@ class _CriticalSpring extends Curve {
 }
 
 extension SakTheme on BuildContext {
-  /// The colour roles, falling back to the plain palette when a screen is
-  /// shown outside the app theme (widget tests pump a bare MaterialApp).
-  SakColors get sak {
-    final theme = Theme.of(this);
-    return theme.extension<SakColors>() ??
-        (theme.brightness == Brightness.dark ? SakColors.dark : SakColors.light);
-  }
+  SakColors get sak => Theme.of(this).extension<SakColors>() ?? SakColors.ember;
 
   TextTheme get type => Theme.of(this).textTheme;
 }

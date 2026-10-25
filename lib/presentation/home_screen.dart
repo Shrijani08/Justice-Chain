@@ -1,28 +1,59 @@
 import 'dart:async';
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import '../core/app_services.dart';
-import '../core/disguise_service.dart';
 import '../core/emergency_controller.dart';
-import '../core/yamnet_detector.dart';
 import '../core/evidence_vault_service.dart';
+import '../core/guardian_evidence_service.dart';
+import '../core/identity_service.dart';
 import '../core/mesh_service.dart';
 import '../core/protection_service.dart';
+import '../logic/guardian_manager.dart';
 import '../logic/safety_signals.dart';
+import 'add_guardian_screen.dart';
 import 'design/components.dart';
 import 'design/sentinel.dart';
 import 'design/tokens.dart';
 import 'evidence_viewer_screen.dart';
 import 'guardian_evidence_screen.dart';
-import 'guardian_pairing_screen.dart';
-import 'guardian_scanner_screen.dart';
 import 'guardians_screen.dart';
+import 'guide_screens.dart';
+import 'listening_screen.dart';
+import 'profile_screen.dart';
+import 'recording_screen.dart';
+import 'setup_screens.dart';
+
+/// What screens above home can ask of it: the home screen owns the camera
+/// and the recording, so they go through here.
+abstract final class SafetyActions {
+  static _MainSafetyScreenState? _home;
+
+  static Future<void> startRecording() async => _home?.startEmergencyRecording();
+
+  static Future<void> stopRecording() async => _home?.stopEmergencyRecording();
+
+  static bool get isSaving => _home?._isProcessingSave ?? false;
+
+  /// Opens a screen that needs the camera itself (the QR scanner): home
+  /// lets the camera go first and takes it back after.
+  static Future<void> openCameraScreen(BuildContext context, Widget screen) async {
+    final home = _home;
+    if (home == null) {
+      await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+      return;
+    }
+    await home._openCameraScreen(context, screen);
+  }
+
+  /// Opens Add guardian on its scan or show-my-QR tab.
+  static Future<void> addGuardian(BuildContext context, {bool showMine = false}) =>
+      openCameraScreen(context, AddGuardianScreen(showMine: showMine));
+}
 
 class MainSafetyScreen extends StatefulWidget {
   const MainSafetyScreen({super.key});
@@ -39,17 +70,31 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
   bool _cameraLent = false; // another screen (the QR scanner) is using it
   bool _cameraSyncing = false;
   bool _cameraResync = false;
+  bool _meshOn = false;
+  bool _recordingRouteOpen = false;
+  String _name = '';
   EffectCleanup? _distressEffectCleanup;
+  EffectCleanup? _recordingRouteCleanup;
 
   @override
   void initState() {
     super.initState();
+    SafetyActions._home = this;
     WidgetsBinding.instance.addObserver(this);
     _initPermissions();
     _setupAutomaticTrigger();
+    IdentityService.getMyName().then((name) {
+      if (mounted) setState(() => _name = name);
+    });
     // When a recording ends, take the camera back or let it go to match the screen.
     _cameraEffectCleanup = effect(() {
       if (!isRecording.value) unawaited(_syncCamera());
+    });
+    // Any recording, however it started, shows the recording screen.
+    _recordingRouteCleanup = effect(() {
+      if (isRecording.value && !_recordingRouteOpen) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _openRecordingScreen());
+      }
     });
   }
 
@@ -77,12 +122,28 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
 
   @override
   void dispose() {
+    if (SafetyActions._home == this) SafetyActions._home = null;
     WidgetsBinding.instance.removeObserver(this);
     _cameraEffectCleanup?.call();
     _distressEffectCleanup?.call();
+    _recordingRouteCleanup?.call();
     unawaited(EmergencyController.shutdownMonitoring());
     _cameraController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _openRecordingScreen() async {
+    if (!mounted || _recordingRouteOpen || !isRecording.value) return;
+    _recordingRouteOpen = true;
+    await Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        transitionDuration: SakMotion.of(context, const Duration(milliseconds: 380)),
+        reverseTransitionDuration: SakMotion.of(context, SakMotion.standard),
+        pageBuilder: (_, _, _) => RecordingScreen(startedAt: DateTime.now()),
+        transitionsBuilder: (_, a, _, child) => FadeTransition(opacity: a, child: child),
+      ),
+    );
+    _recordingRouteOpen = false;
   }
 
   Future<void> _initPermissions() async {
@@ -110,6 +171,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
     } else {
       logger.w("Nearby permissions denied: offline guardian relay disabled.");
     }
+    if (mounted) setState(() => _meshOn = canUseMesh);
 
     final hasCameraPermission = statuses[Permission.camera]?.isGranted ?? false;
     final hasMicrophonePermission =
@@ -189,23 +251,21 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
   }
 
   /// Opens a screen that needs the camera itself, then takes it back.
-  Future<void> _openCameraScreen(Widget screen) async {
+  Future<void> _openCameraScreen(BuildContext from, Widget screen) async {
     if (isRecording.value) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(from).showSnackBar(
         const SnackBar(content: Text('Stop the recording first.')),
       );
       return;
     }
+    final navigator = Navigator.of(from);
     _cameraLent = true;
     await _releaseCamera();
     if (!mounted) {
       _cameraLent = false;
       return;
     }
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => screen),
-    );
+    await navigator.push(MaterialPageRoute(builder: (context) => screen));
     _cameraLent = false;
     if (mounted) await _initializeCamera();
   }
@@ -213,40 +273,14 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) => unawaited(_syncCamera());
 
-  /// Turns disguise on or off. Turning it on while listening also asks the
-  /// user to turn off the disguised notification's channel once: Android
-  /// heads every notification with the app's real name.
-  Future<void> _setDisguise(bool on) async {
-    await DisguiseService.setEnabled(on);
-    if (!on || !ProtectionService.enabled.value || !ProtectionService.listenWhileDisguised.value) return;
-    if (!await ProtectionService.disguisedNotificationVisible() || !mounted) return;
-    final openSettings = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Hide the notification'),
-        content: const Text(
-          "Android always shows the app's real name on its notification. "
-          'On the next screen, turn off "Background" so nothing gives Sakshya away. '
-          'Listening keeps working.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Not now')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Open settings')),
-        ],
-      ),
-    );
-    if (openSettings == true) await ProtectionService.openDisguisedNotificationSettings();
-  }
-
   /// Vivo's and Samsung's battery savers stop background apps, so this asks
-  /// Android once to leave Sakshya alone (step 6b). The makers' own settings
-  /// pages come with the redesign's guide.
+  /// Android once to leave Sakshya alone (step 6b). Setup asks first; the
+  /// guide has the makers' own settings.
   Future<void> _askBatteryExemptionOnce() async {
-    const askedKey = 'battery_exemption_asked';
     final box = Hive.box('vault_box');
-    if (!ProtectionService.enabled.value || box.get(askedKey) == true) return;
+    if (!ProtectionService.enabled.value || box.get(SetupFlow.batteryAskedKey) == true) return;
     if (await Permission.ignoreBatteryOptimizations.isGranted) return;
-    await box.put(askedKey, true);
+    await box.put(SetupFlow.batteryAskedKey, true);
     await Permission.ignoreBatteryOptimizations.request();
   }
 
@@ -307,9 +341,9 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
     }
   }
 
-  /// Manual "STOP RECORDING" button path. The automatic 45-second timeout
-  /// path runs independently through EmergencyController and
-  /// EvidenceVaultService, with no dependency on this screen being mounted.
+  /// Manual "Stop & seal" path. The automatic 45-second timeout path runs
+  /// independently through EmergencyController and EvidenceVaultService,
+  /// with no dependency on this screen being mounted.
   Future<void> stopEmergencyRecording() async {
     if (EmergencyController.isBackgroundRecording) {
       // Started while the app was away; the controller seals it.
@@ -351,331 +385,399 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
     }
   }
 
-  // --- DEBUG TOOLS ---
-
-  void _debugPrintVault() {
-    final vaultBox = Hive.box('vault_box');
-    final entries = vaultBox.toMap();
-    logger.i("=== MANUAL VAULT CHECK (${entries.length} items) ===");
-
-    entries.forEach((key, data) {
-      // Evidence records are keyed by content hash and carry a 'status'
-      // field; other box entries (e.g. the trusted-guardians map) are not
-      // evidence records and are skipped here rather than misreported.
-      if (data is Map && data['status'] != null) {
-        final fullHash = (data['hash'] ?? key).toString();
-        final displayHash = fullHash.length > 15
-            ? fullHash.substring(0, 15)
-            : fullHash;
-        final cid = data['cid'] ?? 'Pending/None';
-        logger.d(
-          "Key $key: Hash: $displayHash... | CID: $cid | Path: ${data['path']}",
-        );
-      }
-    });
-  }
-
-
   void _push(Widget screen) {
     Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
   }
 
-  SentinelState _sentinelState({
-    required bool recording,
-    required bool distress,
-    required bool listening,
-    required bool modelReady,
-  }) {
-    if (_isProcessingSave) return SentinelState.saving;
-    if (recording) return SentinelState.recording;
-    if (distress) return SentinelState.alert;
-    if (listening) return SentinelState.listening;
-    if (!modelReady) return SentinelState.starting;
-    return SentinelState.offline;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentStatus = appStatus.watch(context);
-    final isRecordingActive = isRecording.watch(context);
     final isReady = cameraReady.watch(context);
-    final currentAiStatus = aiStatus.watch(context);
-    final currentAiConfidence = aiConfidence.watch(context);
-    final isAiReady = aiModelReady.watch(context);
     final isAiActive = aiActive.watch(context);
-    final currentAiPrediction = aiPrediction.watch(context);
-    final isDistressDetected = aiDistressDetected.watch(context);
-    final c = context.sak;
+    final isAiReady = aiModelReady.watch(context);
+    final level = aiConfidence.watch(context);
 
-    final state = _sentinelState(
-      recording: isRecordingActive,
-      distress: isDistressDetected,
-      listening: isAiActive,
-      modelReady: isAiReady,
-    );
+    final (pillLabel, pillColor, headline, subline) = !isAiReady
+        ? ('Starting', Ember.attention, 'Getting ready…', 'Loading the listening model on this phone.')
+        : isAiActive && isReady
+            ? ('Listening', Ember.sealed, "You're protected.", 'If it hears distress, recording starts on its own.')
+            : isAiActive
+                ? ('Listening', Ember.sealed, "You're protected.", 'Listening. Allow the camera to record video too.')
+                : ('Paused', Ember.attention, 'Not listening.', 'Allow the microphone so Sakshya can hear danger.');
 
-    return SakPage(
-      title: 'Sakshya',
-      slivers: [
-        SliverToBoxAdapter(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // The live state: the seal, what the system says, and what is on.
-              Reveal(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(SakSpace.gutter, SakSpace.sm, SakSpace.gutter, 0),
-                  child: Column(
-                    children: [
-                      SentinelOrb(state: state, level: currentAiConfidence),
-                      const SizedBox(height: SakSpace.lg),
-                      AnimatedSwitcher(
-                        duration: SakMotion.of(context, SakMotion.quick),
-                        child: Text(
-                          currentStatus,
-                          key: ValueKey(currentStatus),
-                          textAlign: TextAlign.center,
-                          style: context.type.bodyMedium?.copyWith(color: c.inkSecondary),
-                        ),
-                      ),
-                      const SizedBox(height: SakSpace.md),
-                      Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: SakSpace.sm,
-                        runSpacing: SakSpace.sm,
-                        children: [
-                          StatusPill(
-                            label: isAiActive ? 'Listening' : 'Idle',
-                            color: isAiActive ? c.success : c.inkSecondary,
-                            pulsing: isAiActive,
-                          ),
-                          StatusPill(
-                            label: isAiReady ? 'Model ready' : 'Model loading',
-                            color: isAiReady ? c.success : c.inkSecondary,
-                            icon: isAiReady ? Icons.check_rounded : Icons.downloading_rounded,
-                          ),
-                          StatusPill(
-                            label: isReady ? 'Camera ready' : 'Camera off',
-                            color: isReady ? c.success : c.warning,
-                            icon: isReady ? Icons.videocam_rounded : Icons.videocam_off_rounded,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: SakSpace.xl),
-
-              if (isReady)
-                // The manual SOS path: it calls startEmergencyRecording()
-                // directly, bypassing the AI model and its 2-of-3 confirmation
-                // window entirely. A victim who can act must never depend on
-                // the model being right or fast enough.
-                Reveal(
-                  index: 1,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: SakSpace.gutter),
-                    child: SakButton(
-                      label: _isProcessingSave
-                          ? 'Sealing to Vault…'
-                          : (isRecordingActive ? 'Stop Recording' : 'SOS · Start Recording'),
-                      icon: isRecordingActive ? Icons.stop_rounded : Icons.videocam_rounded,
-                      style: isRecordingActive ? SakButtonStyle.dangerTinted : SakButtonStyle.danger,
-                      loading: _isProcessingSave,
-                      onPressed: _isProcessingSave
-                          ? null
-                          : () {
-                              if (isRecordingActive) {
-                                stopEmergencyRecording();
-                              } else {
-                                startEmergencyRecording();
-                              }
-                            },
-                    ),
-                  ),
-                )
-              else
-                Reveal(
-                  index: 1,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: SakSpace.gutter),
+    return Scaffold(
+      backgroundColor: Ember.home,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const EmberBackground(
+            color: Ember.home,
+            glows: [
+              Glow(color: Ember.deepWine, width: 420, height: 420, opacity: 0.75, left: -140, top: -160),
+              Glow(color: Color(0xFF4A1430), width: 300, height: 300, opacity: 0.45, right: -140, top: 160),
+              Glow(color: Ember.nightPlum, width: 360, height: 260, left: -60, bottom: -140),
+            ],
+          ),
+          SafeArea(
+            child: ValueListenableBuilder(
+              valueListenable: Hive.box('vault_box').listenable(),
+              builder: (context, _, _) => ValueListenableBuilder(
+                valueListenable: Hive.box(MeshService.receivedSharesBoxName).listenable(),
+                builder: (context, _, _) {
+                  final guardianCount = GuardianManager.getTrustedGuardians().length;
+                  final evidenceCount = Hive.box('vault_box')
+                      .values
+                      .where((v) => v is Map && v['status'] != null)
+                      .length;
+                  final incidents = GuardianEvidenceService.listIncidents();
+                  return SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const SakNotice(
-                          tone: NoticeTone.warning,
-                          title: 'Recording is not ready',
-                          message: 'Sakshya needs the camera and microphone to record evidence. '
-                              'Allow both, then start protection.',
+                        Row(
+                          children: [
+                            _ProfilePill(name: _name, onTap: () => _push(const ProfileScreen())),
+                            const Spacer(),
+                            CircleButton(icon: Icons.help_outline_rounded, label: 'User guide', onTap: () => _push(const GuideScreen())),
+                            const SizedBox(width: 8),
+                            CircleButton(
+                              icon: Icons.notifications_none_rounded,
+                              label: 'Guardian alerts',
+                              badge: incidents.any((i) => i.hasQuorum),
+                              onTap: () => _push(const GuardianEvidenceScreen()),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: SakSpace.md),
-                        SakButton(
-                          label: 'Start Protection',
-                          icon: Icons.refresh_rounded,
-                          onPressed: _initPermissions,
+                        const SizedBox(height: 20),
+                        Reveal(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        PulseDot(color: pillColor),
+                                        const SizedBox(width: 6),
+                                        Text(pillLabel, style: TextStyle(fontFamily: SakFont.body, fontSize: 13, fontWeight: FontWeight.w600, color: pillColor)),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(headline, style: context.type.displayMedium),
+                                    const SizedBox(height: 8),
+                                    Text(subline, style: context.type.bodySmall?.copyWith(fontSize: 14, height: 20 / 14)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 18),
+                              Semantics(
+                                button: true,
+                                label: 'Open listening',
+                                child: GestureDetector(
+                                  onTap: () => _push(const ListeningScreen()),
+                                  // Narrow phones give the headline the room.
+                                  child: SakOrb(size: MediaQuery.sizeOf(context).width < 380 ? 118 : 150, level: level),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
-                    ),
-                  ),
-                ),
-              const SizedBox(height: SakSpace.xl),
-
-              // What the AI is hearing, with the trigger line drawn in.
-              Reveal(
-                index: 2,
-                child: SakGroup(
-                  header: 'Listening',
-                  children: [
-                    SakRow(
-                      icon: isDistressDetected
-                          ? Icons.warning_amber_rounded
-                          : (isAiActive ? Icons.hearing_rounded : Icons.psychology_alt_rounded),
-                      iconColor: isDistressDetected ? c.danger : (isAiActive ? c.success : c.inkSecondary),
-                      title: 'Hears: $currentAiPrediction',
-                      titleStyle: context.type.bodyLarge?.copyWith(
-                        fontWeight: isDistressDetected ? FontWeight.w600 : null,
-                        color: isDistressDetected ? c.danger : null,
-                      ),
-                      subtitle: currentAiStatus,
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(SakSpace.lg, SakSpace.md, SakSpace.lg, SakSpace.lg),
-                      child: ThresholdMeter(
-                        value: currentAiConfidence,
-                        threshold: YamnetDetector.threshold,
-                      ),
-                    ),
-                    // Until the redesign's settings screen.
-                    ValueListenableBuilder<bool>(
-                      valueListenable: ProtectionService.enabled,
-                      builder: (context, on, _) => SakRow(
-                        icon: Icons.lock_clock_rounded,
-                        iconColor: on ? c.success : c.inkSecondary,
-                        title: 'Background protection',
-                        subtitle: on
-                            ? 'Keeps listening when the phone is locked'
-                            : 'Listens only while Sakshya is open',
-                        chevron: false,
-                        trailing: Switch(value: on, onChanged: ProtectionService.setEnabled),
-                        onTap: () => ProtectionService.setEnabled(!on),
-                      ),
-                    ),
-                    ValueListenableBuilder<bool>(
-                      valueListenable: ProtectionService.listenWhileDisguised,
-                      builder: (context, on, _) => SakRow(
-                        icon: Icons.calculate_rounded,
-                        iconColor: on ? c.success : c.inkSecondary,
-                        title: 'Keep listening while disguised',
-                        subtitle: on
-                            ? 'Android shows a microphone dot under the calculator'
-                            : 'Under the calculator only "112 =" records',
-                        chevron: false,
-                        trailing: Switch(value: on, onChanged: ProtectionService.setListenWhileDisguised),
-                        onTap: () => ProtectionService.setListenWhileDisguised(!on),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              if (isReady) ...[
-                // Debug-only affordances: a stray tap on these in the field
-                // could fire a false emergency upload, and they advertise
-                // exactly how the app works to anyone holding the phone, so
-                // they must never ship in a release build.
-                if (kDebugMode)
-                  Reveal(
-                    index: 3,
-                    child: SakGroup(
-                      header: 'Debug',
-                      children: [
-                        SakRow(
-                          icon: Icons.warning_amber_rounded,
-                          iconColor: c.warning,
-                          title: 'Simulate AI Distress',
-                          chevron: false,
-                          enabled: !(_isProcessingSave || isRecordingActive),
-                          onTap: _isProcessingSave || isRecordingActive
-                              ? null
-                              : () async {
-                                  logger.w("Demo AI distress trigger pressed.");
-                                  await EmergencyController.simulateAIDistressDetection();
-                                },
+                        const SizedBox(height: 20),
+                        Reveal(
+                          index: 1,
+                          child: _SosPill(
+                            ready: isReady,
+                            onTap: isReady ? startEmergencyRecording : _initPermissions,
+                          ),
                         ),
-                        SakRow(
-                          icon: Icons.storage_rounded,
-                          iconColor: c.inkSecondary,
-                          title: 'Print Vault Contents',
-                          chevron: false,
-                          onTap: _debugPrintVault,
+                        const SizedBox(height: 20),
+                        Reveal(
+                          index: 2,
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _Tile(
+                                      count: '$guardianCount',
+                                      label: 'Guardians',
+                                      colors: const [Color(0xFF7A2E40), Color(0xFF3A1320), Color(0xFF0E0809)],
+                                      onTap: () => _push(const GuardiansScreen()),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _Tile(
+                                      count: '$evidenceCount',
+                                      label: 'My evidence',
+                                      colors: const [Color(0xFF4E2A5E), Color(0xFF24132E), Color(0xFF0C080E)],
+                                      onTap: () => _push(const EvidenceViewerScreen()),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _Tile(
+                                      icon: Icons.qr_code_2_rounded,
+                                      label: 'Add guardian',
+                                      colors: const [Color(0xFF6E3A30), Color(0xFF33181A), Color(0xFF0E0909)],
+                                      onTap: () => SafetyActions.addGuardian(context),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _Tile(
+                                      count: '${incidents.length}',
+                                      label: 'Guardian evidence',
+                                      colors: const [Color(0xFF3C3F58), Color(0xFF1C1D2A), Color(0xFF0A0A0E)],
+                                      onTap: () => _push(const GuardianEvidenceScreen()),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                        // Until the redesign's settings screen: switch the launcher
-                        // face. The calculator appears the next time the app opens.
-                        ValueListenableBuilder<bool>(
-                          valueListenable: DisguiseService.enabled,
-                          builder: (context, disguised, _) => SakRow(
-                            icon: Icons.calculate_rounded,
-                            iconColor: c.inkSecondary,
-                            title: disguised ? 'Stop Calculator Disguise' : 'Disguise as Calculator',
-                            chevron: false,
-                            onTap: () => _setDisguise(!disguised),
+                        const SizedBox(height: 20),
+                        Reveal(
+                          index: 3,
+                          child: _ReadinessBar(
+                            camera: isReady,
+                            listening: isAiActive,
+                            model: isAiReady,
+                            mesh: _meshOn,
+                            onFix: () => _push(const GuideBackgroundScreen()),
                           ),
                         ),
                       ],
                     ),
-                  ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-                Reveal(
-                  index: 4,
-                  child: SakGroup(
-                    header: 'Guardians',
-                    children: [
-                      SakRow(
-                        icon: Icons.qr_code_2_rounded,
-                        title: 'Show My QR',
-                        subtitle: 'A guardian scans this to pair with you',
-                        onTap: () => _push(const GuardianPairingScreen()),
+class _ProfilePill extends StatelessWidget {
+  const _ProfilePill({required this.name, required this.onTap});
+  final String name;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Profile, $name',
+      child: Pressable(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Glass(
+            radius: SakRadius.pill,
+            padding: const EdgeInsets.fromLTRB(6, 6, 16, 6),
+            child: ExcludeSemantics(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFFF8A5B), Color(0xFFC2185B), Color(0xFF5A1424)],
+                        stops: [0, 0.6, 1],
                       ),
-                      SakRow(
-                        icon: Icons.qr_code_scanner_rounded,
-                        title: 'Scan QR',
-                        subtitle: 'Add someone you trust as a guardian',
-                        onTap: () => _openCameraScreen(const GuardianScannerScreen()),
-                      ),
-                      SakRow(
-                        icon: Icons.groups_rounded,
-                        title: 'My Guardians',
-                        onTap: () => _push(const GuardiansScreen()),
-                      ),
-                    ],
+                    ),
+                    child: Text(
+                      name.isEmpty ? '' : name.characters.first.toUpperCase(),
+                      style: const TextStyle(fontFamily: SakFont.body, fontWeight: FontWeight.w700, fontSize: 15, color: Ember.ink),
+                    ),
                   ),
-                ),
-                Reveal(
-                  index: 5,
-                  child: SakGroup(
-                    header: 'Evidence',
-                    children: [
-                      SakRow(
-                        icon: Icons.video_library_rounded,
-                        title: 'My Evidence',
-                        subtitle: 'Your sealed recordings',
-                        onTap: () => _push(const EvidenceViewerScreen()),
-                      ),
-                      SakRow(
-                        icon: Icons.shield_rounded,
-                        title: 'Guardian Evidence',
-                        subtitle: 'Clips from people who chose you',
-                        onTap: () => _push(const GuardianEvidenceScreen()),
-                      ),
-                    ],
+                  const SizedBox(width: 10),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 140),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: SakFont.body, fontWeight: FontWeight.w600, fontSize: 15, height: 1.15, color: Ember.ink)),
+                        const Text('Profile', style: TextStyle(fontFamily: SakFont.body, fontSize: 12, height: 1.15, color: Ember.ink2)),
+                      ],
+                    ),
                   ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The manual SOS path: it calls startEmergencyRecording() directly,
+/// bypassing the AI model and its 2-of-3 confirmation window entirely. A
+/// victim who can act must never depend on the model being right.
+class _SosPill extends StatelessWidget {
+  const _SosPill({required this.ready, required this.onTap});
+  final bool ready;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: ready ? 'SOS, start recording' : 'Recording is not ready. Allow camera and microphone',
+      child: Pressable(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: 72,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Ember.emberStart, Ember.emberEnd], stops: [0, 0.75]),
+              borderRadius: BorderRadius.circular(SakRadius.pill),
+              border: Border.all(color: Ember.emberEdge),
+              boxShadow: const [BoxShadow(color: Color(0x8C5A0F22), blurRadius: 36, offset: Offset(0, 16))],
+            ),
+            child: ExcludeSemantics(
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x2EFFFFFF)),
+                    child: Icon(ready ? Icons.videocam_outlined : Icons.videocam_off_outlined, color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          ready ? 'SOS · Start recording' : 'Recording is not ready',
+                          style: const TextStyle(fontFamily: SakFont.body, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: -0.2, color: Colors.white),
+                        ),
+                        Text(
+                          ready ? 'One tap. No AI needed.' : 'Tap to allow the camera and microphone',
+                          style: const TextStyle(fontFamily: SakFont.body, fontSize: 13, color: Color(0xD9FFFFFF)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Tile extends StatelessWidget {
+  const _Tile({required this.label, required this.colors, required this.onTap, this.count, this.icon});
+
+  final String label;
+  final List<Color> colors;
+  final VoidCallback onTap;
+  final String? count;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: count == null ? label : '$label, $count',
+      child: Pressable(
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: 132,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(SakRadius.card),
+              border: Border.all(color: const Color(0x1AFFFFFF)),
+              gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: colors, stops: const [0, 0.52, 1]),
+            ),
+            child: ExcludeSemantics(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (count != null)
+                    Text(count!, style: const TextStyle(fontFamily: SakFont.display, fontSize: 30, fontWeight: FontWeight.w700, letterSpacing: -0.6, color: Ember.ink, height: 1.1))
+                  else
+                    Padding(padding: const EdgeInsets.only(bottom: 6), child: Icon(icon, size: 26, color: Ember.ink)),
+                  const SizedBox(height: 2),
+                  Text(
+                    label.toUpperCase(),
+                    style: const TextStyle(fontFamily: SakFont.mono, fontSize: 11, letterSpacing: 1.4, color: Color(0xD9FFFFFF)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReadinessBar extends StatelessWidget {
+  const _ReadinessBar({required this.camera, required this.listening, required this.model, required this.mesh, required this.onFix});
+
+  final bool camera;
+  final bool listening;
+  final bool model;
+  final bool mesh;
+  final VoidCallback onFix;
+
+  @override
+  Widget build(BuildContext context) {
+    final allReady = camera && listening && model;
+    final missing = [
+      if (!camera) 'camera',
+      if (!listening) 'microphone',
+      if (!model) 'AI model',
+    ];
+    final text = allReady ? 'Camera, mic and AI model ready' : 'Not ready: ${missing.join(', ')}';
+    return Semantics(
+      button: !allReady,
+      child: GestureDetector(
+        onTap: allReady ? null : onFix,
+        child: Glass(
+          radius: 20,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(allReady ? Icons.verified_user_outlined : Icons.warning_amber_rounded, size: 20, color: allReady ? Ember.sealed : Ember.attention),
+              const SizedBox(width: 12),
+              Expanded(child: Text(text, style: context.type.bodyMedium?.copyWith(fontSize: 14, height: 19 / 14))),
+              Text(
+                allReady ? (mesh ? 'Offline relay on' : 'Offline relay off') : 'Fix',
+                style: TextStyle(
+                  fontFamily: SakFont.body,
+                  fontSize: 12,
+                  fontWeight: allReady ? FontWeight.w400 : FontWeight.w700,
+                  color: allReady ? Ember.ink2 : Ember.attention,
                 ),
-              ],
+              ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

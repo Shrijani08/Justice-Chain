@@ -254,6 +254,9 @@ class IdentityService {
     return name != null && name.isNotEmpty;
   }
 
+  /// The name the user registered with, for the home and profile screens.
+  static Future<String> getMyName() async => await _storage.read(key: 'node_name') ?? '';
+
   /// Retrieves the public Node ID to display on the screen
   static Future<String> getMyNodeId() async {
     if (_cachedNodeId != null) return _cachedNodeId!;

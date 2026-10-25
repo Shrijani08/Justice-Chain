@@ -13,13 +13,15 @@
  *
  *   GET  /api/whoami                 officer1 as the ledger sees them
  *   GET  /api/clips                  clips shared with SimPolice, with their
- *                                    ledger record and access requests
+ *                                    ledger record, access requests and
+ *                                    whether an officer has opened them
  *   POST /api/clips/:hash/requests   {reason, caseRef}: request access
  *   POST /api/clips/:hash/open       unseal the pieces, rebuild the key,
  *                                    fetch the clip from IPFS, decrypt and
  *                                    verify it, record "opened"
  *   GET  /api/videos/:token          the decrypted clip, for 10 minutes
- *   GET  /api/clips/:hash/audit      the clip's audit trail (as supervisor1)
+ *   GET  /api/clips/:hash/audit      the clip's audit trail (as supervisor1),
+ *                                    with each entry's block number
  *
  * IPFS_GATEWAY (default the Pinata gateway, as in the app) is where
  * ciphertext is fetched from: <IPFS_GATEWAY><cid>.
@@ -129,9 +131,18 @@ async function listClips() {
     const requests = requestsByVictim.get(consent.victimNodeId)
       .filter((r) => r.manifestHash === consent.manifestHash && r.authorityMsp === CONFIG.mspId);
     const record = await verifyEvidence(consent.manifestHash);
-    clips.push({ consent, record, requests });
+    const trail = await evaluate(supervisor, 'GetAuditTrail', consent.manifestHash);
+    const opened = trail.some((e) => e.event === 'opened');
+    clips.push({ consent, record, requests, opened });
   }
   return clips.sort((a, b) => b.consent.sharedAt - a.consent.sharedAt);
+}
+
+/** A clip's audit trail as supervisor1, each entry with the block it committed in. */
+async function auditTrail(hash) {
+  const trail = await evaluate(supervisor, 'GetAuditTrail', hash);
+  for (const entry of trail) entry.blockNumber = await blockNumberOf(entry.txId);
+  return trail;
 }
 
 /**
@@ -257,7 +268,7 @@ const server = http.createServer(async (req, res) => {
     } else if (req.method === 'POST' && parts[1] === 'clips' && parts[3] === 'open' && parts.length === 4) {
       send(res, 200, await openClip(requireHash(parts[2])));
     } else if (req.method === 'GET' && parts[1] === 'clips' && parts[3] === 'audit' && parts.length === 4) {
-      send(res, 200, await evaluate(supervisor, 'GetAuditTrail', requireHash(parts[2])));
+      send(res, 200, await auditTrail(requireHash(parts[2])));
     } else if (req.method === 'GET' && parts[1] === 'videos' && parts.length === 3 && videos.has(parts[2])) {
       const clip = videos.get(parts[2]);
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': clip.length, 'Cache-Control': 'no-store' });

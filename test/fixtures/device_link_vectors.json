@@ -1,0 +1,100 @@
+{
+  "_comment": "Made by the SOS device code (device/justice_device). Regenerate only if the formats change on both sides.",
+  "owner": {
+    "nodeId": "17999fb9891bd448",
+    "ed25519Public": "bDpp6fWWBrKGvX/Y+bkF7uarth5H5DTeQrOM+yLrzbo=",
+    "x25519Private": "8tp9aQrkjaeKJGr8pNbJc5c8J7YaJY2SD3V6r6QU+EQ="
+  },
+  "device": {
+    "kind": "sos-device",
+    "node_id": "cf046f2550a7c526",
+    "public_key": "nhm8SH9feNkYPFYHCWnqIsurMidp4VvNNGJNxFUEwdM=",
+    "x25519_public_key": "PGtErsREL/5rPfM40vBb6/M/4F8I58wahkkqZ2AX2D8=",
+    "anchoring_address": "0xA47895cb12376324255d21B38192bd08aD1E8CfE"
+  },
+  "deviceX25519Private": "a/p9F+qRN7OlvpAl4/LDArkB9sHOyyoScdVDXLCKwIo=",
+  "certificate": {
+    "deviceNodeId": "cf046f2550a7c526",
+    "deviceEd25519": "nhm8SH9feNkYPFYHCWnqIsurMidp4VvNNGJNxFUEwdM=",
+    "deviceX25519": "PGtErsREL/5rPfM40vBb6/M/4F8I58wahkkqZ2AX2D8=",
+    "deviceAnchoringAddress": "0xa47895cb12376324255d21b38192bd08ad1e8cfe",
+    "ownerNodeId": "17999fb9891bd448",
+    "issuedAt": 1792900000,
+    "signature": "GyUWSfZcMz+oPZ8m9pBKWpogpmNqH8ZFSe7D96r0D6g93MFeG9KeyQsbh/AkyN3UXbBdu/599O7mYFwKqjXCDg=="
+  },
+  "certificatePayload": "justice-chain/device-owner/v1|cf046f2550a7c526|nhm8SH9feNkYPFYHCWnqIsurMidp4VvNNGJNxFUEwdM=|PGtErsREL/5rPfM40vBb6/M/4F8I58wahkkqZ2AX2D8=|0xa47895cb12376324255d21b38192bd08ad1e8cfe|17999fb9891bd448|1792900000",
+  "setup": {
+    "found": true,
+    "deviceNodeId": "cf046f2550a7c526",
+    "ownerNodeId": "17999fb9891bd448",
+    "ownerEd25519": "bDpp6fWWBrKGvX/Y+bkF7uarth5H5DTeQrOM+yLrzbo=",
+    "ownerX25519": "eWcujGMPfA46eOkpa2krISCE5SyKKIUUrPJlkbS3lj8=",
+    "issuedAt": 1792900000,
+    "sealed": "BCv2zYaRFuQCpsGY+Jz09PjQayCMiHwMW9bAX/ySy2N8nkgktnQGll5fzWtnsroFp+MqBtzAC/wD2lolWb5Hz6W8J3+Y5aF0cpNkE5LCl2TvfCMcwTAILBi/DvKLU9qlRB8yHXCBwsxOJGzaGbjJ7MYQQ4NQkDo/1FejGXeKW3n3VvEBc9etE/UHxCVdJoN9yHmG3EHgky4VsPCw90u1S+roSXXP+sZlKFQk4V9Rq1vZhZ5vJucil5zBpNNKTKZ3w+d02LfUyxjr1VSkQuMTNcFTUUWJ5TdSyZzZTDGbdIeqBwu7gZ7caKTP43rwrsz+i7TnSWm6PjomrjU330Xvh5TDLxMejXR86nOhqdeMajVf2QWYOXp8Y5Z8HsXEQANAUfDyy9VWOT6uLWPGWXQByYIogjjCak0sVUGpWA+h4DGGCE77LTmbQMSQikORrQR63fYX4moKFLN1muSuAJEtIA+BE9qXGU5Q1fX0FQQ8bInv0p1t+MkIt5JRtnpP2nC9v4M/ayg717OfZVSRqrS93/+NMMP766NexK726JwQ8YD42vo8vO6ws9gQmbikDk5rZxNxcM+PdaTrPHlptb0gF4zyrqnK0uBMnt3gnwFLzdkV6Fupt+9BZRKBHbczOLgs552i57R2FvGxL/NbgaOkSN2TJSOUzZMZLVK/ad4Nt6KgLEgt7KkmP/HQoXu1OL0UfBitvnHsg4DTzzLTgi+B4k7xIEc3OjZquXYTrRnXDgMdXONuXbazi+AHYeFjc4brtctWYuOg759kpznbCJCsDtqk5ub6LmnO61HaOSw8Ux0pJoBx089jx8+duXZG5ITEunv5pfmbJqmXP5sm2ze1J9NRz2EFsM/kNTdhYvvP/jpzqtvMRECUolOuYsu8JRy/XcyoKh2/jUUyUHLOVQZKY7TZdH1cb/7nOIMb5G8ui8T6x7Xqa+1Z73JuWTYDsIUK8dGyW/k8O4AAttNLSu5ccxBxFppwwBLr+8peBvWxEa2FS+b7ONbBrOKIv12Kbcam8CHw0JYRgoR5gPOj5RdpQuNrp2dMZmkP5soO82niWNDpNiG9mIxMDeErSMQno6sP15m6MYNq0A8BSWG9RLVklnKrPb9yIQFTfpNvq5m3Fb1Obbz2FCAs/1G6sL0ZJerQxv2fJLbX0/O9DNNV7f8mp9jrYXnqfISBUmWB/gjifZMgsg==",
+    "signature": "sbGc68JUFuvEw4WOsSU/FLAACfpxLRjyZAjkoYp0v6Ugkvq9pvi9uG6gS63gXN8R7wTMxDyVZXGDVNHAG6QOAA=="
+  },
+  "setupPayload": "justice-chain/device-setup/v1|cf046f2550a7c526|17999fb9891bd448|1792900000|22df830df45f8a592c4beaed28204524c115b2537821b3725af11863a39f2869",
+  "setupPackage": {
+    "owner": {
+      "nodeId": "17999fb9891bd448",
+      "username": "riya",
+      "ed25519Public": "bDpp6fWWBrKGvX/Y+bkF7uarth5H5DTeQrOM+yLrzbo=",
+      "x25519Public": "eWcujGMPfA46eOkpa2krISCE5SyKKIUUrPJlkbS3lj8="
+    },
+    "guardians": [
+      {
+        "nodeId": "aaaaaaaaaaaaaaaa",
+        "name": "Mom",
+        "x25519Public": "JxTSb1pn0cE6BAcDVDemEy61ZvjenZREYkNkfqrF4X0="
+      },
+      {
+        "nodeId": "bbbbbbbbbbbbbbbb",
+        "name": "Alex",
+        "x25519Public": "z+NRZFq5bDxKPNhvSz8odZETfcKnHfezagcgOAffWlM="
+      }
+    ],
+    "certificate": {
+      "deviceNodeId": "cf046f2550a7c526",
+      "deviceEd25519": "nhm8SH9feNkYPFYHCWnqIsurMidp4VvNNGJNxFUEwdM=",
+      "deviceX25519": "PGtErsREL/5rPfM40vBb6/M/4F8I58wahkkqZ2AX2D8=",
+      "deviceAnchoringAddress": "0xa47895cb12376324255d21b38192bd08ad1e8cfe",
+      "ownerNodeId": "17999fb9891bd448",
+      "issuedAt": 1792900000,
+      "signature": "GyUWSfZcMz+oPZ8m9pBKWpogpmNqH8ZFSe7D96r0D6g93MFeG9KeyQsbh/AkyN3UXbBdu/599O7mYFwKqjXCDg=="
+    },
+    "issuedAt": 1792900000
+  },
+  "piece": {
+    "manifestHash": "c819e1ca90e6d1da6686d771ad3e248f79cb7c3d066c03b0a17705423cb2ad4f",
+    "victimNodeId": "17999fb9891bd448",
+    "fromNodeId": "cf046f2550a7c526",
+    "toNodeId": "2b50591ed9986556",
+    "sealedShare": "1ewaSy9JGDQnd90RF8TE8aREn09raY34SA1zN9k3snS4Cy004zeJkDJiO/nErvfeeecZlPK/1shfqoqumA==",
+    "pieceHash": "ddadab57d5b57177b7296b6997e2a214e57324561c5b04a5ce284bea11fc32bf",
+    "senderX25519": "PGtErsREL/5rPfM40vBb6/M/4F8I58wahkkqZ2AX2D8=",
+    "signature": "tsUgYkLppb4cpyxuAKbxzaKyDCK8m32ToAa7JjN76oJUzBJmf/9GTMCslEdG0Vl31JWompDxvVJn+9kd2DWPDg==",
+    "certificate": {
+      "deviceNodeId": "cf046f2550a7c526",
+      "deviceEd25519": "nhm8SH9feNkYPFYHCWnqIsurMidp4VvNNGJNxFUEwdM=",
+      "deviceX25519": "PGtErsREL/5rPfM40vBb6/M/4F8I58wahkkqZ2AX2D8=",
+      "deviceAnchoringAddress": "0xa47895cb12376324255d21b38192bd08ad1e8cfe",
+      "ownerNodeId": "17999fb9891bd448",
+      "issuedAt": 1792900000,
+      "signature": "GyUWSfZcMz+oPZ8m9pBKWpogpmNqH8ZFSe7D96r0D6g93MFeG9KeyQsbh/AkyN3UXbBdu/599O7mYFwKqjXCDg=="
+    },
+    "share": {
+      "cid": "QmTest",
+      "capturedAt": "2026-10-25T13:13:48.852381+00:00",
+      "quorum": 2,
+      "signature": "ZU2AmfoQ+DrLRL4Kejvk6J9y0rD62COKWeltbHxAXH0IEo1EMbUYfCRc5ng1TezqFILsyRRzdcBpm/Zv9zaJAw==",
+      "source": "sos-device",
+      "deviceNodeId": "cf046f2550a7c526",
+      "deviceEd25519": "nhm8SH9feNkYPFYHCWnqIsurMidp4VvNNGJNxFUEwdM=",
+      "deviceAnchoringAddress": "0xA47895cb12376324255d21B38192bd08aD1E8CfE"
+    }
+  },
+  "piecePayload": "justice-chain/device-piece/v1|c819e1ca90e6d1da6686d771ad3e248f79cb7c3d066c03b0a17705423cb2ad4f|17999fb9891bd448|cf046f2550a7c526|2b50591ed9986556|ddadab57d5b57177b7296b6997e2a214e57324561c5b04a5ce284bea11fc32bf",
+  "guardianX25519Private": "MVtirtLvQ1Yi2P9VTyutT6usY1xyiXHYz+2OADnL+ag=",
+  "clipPlaintextB64": "c29zIGNsaXAgYnl0ZXM=",
+  "clipCiphertextB64": "NOcV47t9FsIJwQhUbl7Gd54VVzrbHQPJFcn+wHBznbTCtVF74POktqf8"
+}

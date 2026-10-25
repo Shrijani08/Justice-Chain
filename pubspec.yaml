@@ -68,4 +68,30 @@ flutter:
     - assets/models/labels.txt
     - assets/models/yamnet.tflite
     - assets/models/yamnet_class_map.csv
+    - assets/images/sakshya_logo.png
     - .env
+
+  # Dark Ember type, bundled so it never depends on the network.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-400.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-500.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-600.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-700.ttf
+          weight: 700
+    - family: InterTight
+      fonts:
+        - asset: assets/fonts/InterTight-600.ttf
+          weight: 600
+        - asset: assets/fonts/InterTight-700.ttf
+          weight: 700
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-400.ttf
+          weight: 400
+        - asset: assets/fonts/JetBrainsMono-500.ttf
+          weight: 500

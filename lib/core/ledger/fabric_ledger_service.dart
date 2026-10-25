@@ -125,6 +125,23 @@ class FabricLedgerService implements LedgerService {
   /// (ReleaseShare + DeliverReleasedShare; safe to retry with the same piece).
   Future<Map<String, dynamic>> releaseShare(Map<String, Object?> body) => _post('/releases', body);
 
+  /// A guardian sends their sealed key piece to a co-guardian: the ledger
+  /// records its hash, the gateway's mailbox holds the piece.
+  Future<Map<String, dynamic>> forwardPiece(Map<String, Object?> body) => _post('/pieces', body);
+
+  /// Pieces waiting in the mailbox for [nodeId].
+  Future<List<Map<String, dynamic>>> listPieces(String nodeId) async => [
+        for (final e in await _get('/pieces/${Uri.encodeComponent(nodeId)}') as List) Map<String, dynamic>.from(e as Map),
+      ];
+
+  /// Clears stored pieces from [nodeId]'s mailbox; [body] is {ids, signature}.
+  Future<Map<String, dynamic>> ackPieces(String nodeId, Map<String, Object?> body) =>
+      _post('/pieces/${Uri.encodeComponent(nodeId)}/ack', body);
+
+  /// Leaves the user's SOS device its sealed setup package (DeviceLinkService).
+  Future<Map<String, dynamic>> putDeviceSetup(String deviceNodeId, Map<String, Object?> body) =>
+      _post('/device-setup/${Uri.encodeComponent(deviceNodeId)}', body);
+
   @override
   Future<AnchorVerificationResult> verifyEvidence(String manifestHashHex) async {
     final record = await _get('/verify/${Uri.encodeComponent(manifestHashHex)}') as Map<String, dynamic>;

@@ -16,10 +16,11 @@ import 'ledger/fabric_ledger_service.dart';
 import 'mesh_service.dart';
 import 'outbox_service.dart';
 
-/// Demo builds only: `flutter run --dart-define=DEMO_AUTHORITY=true`. The
-/// police authority on the Fabric network is SIMULATED; a normal build never
-/// offers it, so no real user can believe they have reported to the police.
-const bool kDemoAuthorityBuild = bool.fromEnvironment('DEMO_AUTHORITY');
+/// The police authority on the Fabric network is SIMULATED. The project is
+/// not offered to real users, so every build shows it (with the SIMULATED
+/// label and the call-112 notice); `--dart-define=DEMO_AUTHORITY=false`
+/// hides it.
+const bool kDemoAuthorityBuild = bool.fromEnvironment('DEMO_AUTHORITY', defaultValue: true);
 
 /// This phone's presence on the Fabric ledger, and sharing key pieces with
 /// a registered authority (design doc Step 8, app part).
@@ -34,8 +35,11 @@ class AuthorityService {
   static const String simPoliceMsp = 'SimPoliceMSP';
   static const int maxLedgerGuardians = 10; // the chaincode's limit
 
-  static const String _optInKey = 'authority_guardian_msp';
-  static const String _registeredKey = 'ledger_node_registered';
+  /// The vault key holding the opt-in, for screens that listen to it.
+  static const String optInKey = 'authority_guardian_msp';
+  // v2: registering again stores the registration's signatures on the
+  // ledger (phones registered before that kept none).
+  static const String _registeredKey = 'ledger_node_registered_v2';
 
   static Box get _box => Hive.box('vault_box');
 
@@ -62,21 +66,28 @@ class AuthorityService {
   static FabricLedgerService _requireLedger() =>
       _ledger ?? (throw StateError('Phone registry needs LEDGER=fabric and GATEWAY_URL in .env'));
 
+  /// The Fabric gateway, for other ledger features; throws without one.
+  static FabricLedgerService requireGateway() => _requireLedger();
+
   /// True when the app talks to the Fabric gateway.
   static bool get ledgerFeaturesEnabled => _ledger != null;
 
   static bool get demoBuild => demoBuildForTest ?? kDemoAuthorityBuild;
 
+  /// True when the police guardian can be offered: this build shows it and
+  /// the app talks to the Fabric gateway.
+  static bool get available => demoBuild && ledgerFeaturesEnabled;
+
   /// Whether the user has opted in to giving the simulated authority one
   /// key piece of each new recording.
-  static bool get sharesWithAuthority => _box.get(_optInKey) != null;
+  static bool get sharesWithAuthority => _box.get(optInKey) != null;
 
   static Future<void> setShareWithAuthority(bool on) async {
     if (on && !demoBuild) throw StateError('The authority guardian exists only in demo builds');
     if (on) {
-      await _box.put(_optInKey, simPoliceMsp);
+      await _box.put(optInKey, simPoliceMsp);
     } else {
-      await _box.delete(_optInKey);
+      await _box.delete(optInKey);
     }
   }
 
@@ -84,7 +95,7 @@ class AuthorityService {
   /// Decided at recording time, like the threshold: opting in never shares
   /// recordings made before it.
   static String? authorityForNewRecordings() =>
-      demoBuild && ledgerFeaturesEnabled ? _box.get(_optInKey) as String? : null;
+      demoBuild && ledgerFeaturesEnabled ? _box.get(optInKey) as String? : null;
 
   static String _sha256Hex(List<int> bytes) => crypto.sha256.convert(bytes).toString();
 
@@ -187,8 +198,10 @@ class AuthorityService {
     final onLedger = current['found'] == true;
     final currentIds = onLedger ? List<String>.from(current['guardians'] as List) : const <String>[];
     // Nothing to write when the list already matches, or when it was never
-    // set and there is no one to name yet.
-    if (!listEquals(currentIds, ids) && (onLedger || ids.isNotEmpty)) {
+    // set and there is no one to name yet. A list from before the ledger kept
+    // signatures is written again, so guardians can check it themselves.
+    final unsigned = onLedger && current['signature'] == null;
+    if ((!listEquals(currentIds, ids) || unsigned) && (onLedger || ids.isNotEmpty)) {
       // The ledger refuses a sequence that doesn't grow; reading it back
       // first keeps a reinstalled phone from getting stuck behind its old one.
       final sequence = (onLedger ? current['sequence'] as int : 0) + 1;
@@ -286,6 +299,15 @@ class AuthorityService {
 
   static const String _releasesKey = 'authority_releases';
 
+  /// True once the user approved [requestId] on this phone: its release is
+  /// sent or still waiting in the outbox.
+  static bool releaseStarted(String requestId) {
+    final releases = _box.get(_releasesKey);
+    return (releases is Map && releases.containsKey(requestId)) || _approved.contains(requestId);
+  }
+
+  static final Set<String> _approved = {};
+
   /// Open requests the authority filed for this phone's own recordings.
   static Future<List<Map<String, dynamic>>> openRequestsForMyRecordings() async {
     final me = await IdentityService.getMyNodeId();
@@ -317,6 +339,7 @@ class AuthorityService {
 
   /// The user's approval of [requestId]: queued, so it retries offline.
   static Future<void> approveRequest(String requestId) async {
+    _approved.add(requestId);
     await OutboxService.enqueue(
       '${OutboxService.jobAuthorityRelease}:$requestId',
       OutboxService.jobAuthorityRelease,

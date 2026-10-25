@@ -1,7 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'dart:developer' as developer;
 
@@ -222,6 +227,7 @@ class EvidenceVaultService {
     if (txHash != null) record['anchorTxHash'] = txHash;
     await _vaultBox.put(recordKey, record);
     appStatus.value = "Evidence Secured, Uploaded & Anchored!";
+    await _dropLocalCopy(recordKey);
 
     if (record['authorityMsp'] != null && record['authorityShare'] == null) {
       await OutboxService.enqueueAuthorityShare(recordKey);
@@ -266,16 +272,75 @@ class EvidenceVaultService {
     }
   }
 
+  /// Test seam for the IPFS download in [openOwnClip].
+  @visibleForTesting
+  static http.Client? clientForTest;
+
+  /// Deletes the phone's encrypted copy of a clip once it is on IPFS and
+  /// anchored: the copies there are the evidence, and a clip kept on the
+  /// phone costs storage and is one more thing someone holding the phone
+  /// could open. The record and its wrapped key stay, so the clip still
+  /// plays (downloaded, [openOwnClip]) and guardians still get late pieces.
+  /// Nearby relays need no file by then (MeshService.relayClip skips
+  /// anchored clips); guardians download from IPFS instead.
+  static Future<void> _dropLocalCopy(String recordKey) async {
+    final raw = _vaultBox.get(recordKey);
+    if (raw is! Map || raw['status'] != 'anchored' || raw['cid'] == null) return;
+    final record = Map<String, dynamic>.from(raw);
+    final path = record['path'] as String?;
+    if (path != null) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+    if (record['localCopyDeleted'] != true) {
+      record['localCopyDeleted'] = true;
+      await _vaultBox.put(recordKey, record);
+    }
+  }
+
+  /// One of this phone's own clips, decrypted: from the local copy while it
+  /// exists, else downloaded from IPFS. Throws if the download doesn't match
+  /// the clip's hash.
+  static Future<Uint8List> openOwnClip(String recordKey) async {
+    final raw = _vaultBox.get(recordKey);
+    if (raw is! Map || raw['wrappedKey'] == null) throw StateError('No such clip on this phone');
+    final wrappedKey = raw['wrappedKey'] as String;
+    final path = raw['path'] as String?;
+    if (path != null && await File(path).exists()) return EvidenceEncryptor.decryptFile(path, wrappedKey);
+
+    final cid = raw['cid'] as String?;
+    if (cid == null) throw StateError('This clip has no local copy and no IPFS address yet');
+    final gateway = (dotenv.isInitialized ? dotenv.env['IPFS_GATEWAY'] : null) ?? 'https://gateway.pinata.cloud/ipfs/';
+    final client = clientForTest ?? http.Client();
+    final response = await client.get(Uri.parse('$gateway$cid')).timeout(const Duration(minutes: 3));
+    if (response.statusCode != 200) throw StateError('Downloading the clip failed (HTTP ${response.statusCode})');
+
+    final plaintext = await EvidenceEncryptor.decryptBytes(response.bodyBytes, wrappedKey);
+    if (crypto.sha256.convert(plaintext).toString() != recordKey) {
+      throw StateError('The downloaded clip does not match its record');
+    }
+    return plaintext;
+  }
+
   /// Re-queues uploads, anchors and guardian relays for records left
-  /// unfinished by an earlier session, or for guardians paired since.
+  /// unfinished by an earlier session, or for guardians paired since, and
+  /// deletes local copies (own and relayed) of clips anchored before that
+  /// was done at once.
   static Future<void> resumePendingWork() async {
     final guardianIds = GuardianManager.getTrustedGuardians().keys.cast<String>();
+
+    if (Hive.isBoxOpen(MeshService.relayBoxName)) {
+      for (final key in Hive.box(MeshService.relayBoxName).keys.toList()) {
+        await _dropRelayCopy(key as String);
+      }
+    }
 
     for (final key in _vaultBox.keys.toList()) {
       final raw = _vaultBox.get(key);
       if (!_isOwnEvidence(raw)) continue;
       final recordKey = key as String;
       final status = (raw as Map)['status'];
+      if (status == 'anchored') await _dropLocalCopy(recordKey);
 
       switch (status) {
         case 'locally_secured':
@@ -338,5 +403,26 @@ class EvidenceVaultService {
     relay['status'] = 'relay_anchored';
     await relayBox.put(manifestHash, relay);
     appStatus.value = "Relayed evidence uploaded & anchored for a contact";
+    await _dropRelayCopy(manifestHash);
+  }
+
+  /// Deletes a guardian's relayed copy of someone else's clip once it is on
+  /// IPFS and anchored, as [_dropLocalCopy] does for this phone's own clips.
+  /// The relay record stays, so the clip still lists; opening it downloads
+  /// it (GuardianEvidenceService falls back to IPFS without a local copy).
+  static Future<void> _dropRelayCopy(String manifestHash) async {
+    final relayBox = Hive.box(MeshService.relayBoxName);
+    final raw = relayBox.get(manifestHash);
+    if (raw is! Map || raw['status'] != 'relay_anchored' || raw['cid'] == null) return;
+    final relay = Map<String, dynamic>.from(raw);
+    final path = relay['path'] as String?;
+    if (path != null) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+    if (relay['localCopyDeleted'] != true) {
+      relay['localCopyDeleted'] = true;
+      await relayBox.put(manifestHash, relay);
+    }
   }
 }

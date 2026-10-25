@@ -39,6 +39,7 @@ const ACTION_REGISTER_NODE = 'justice-chain/register-node/v1';
 const ACTION_SET_GUARDIANS = 'justice-chain/set-guardians/v1';
 const ACTION_SHARE_WITH_AUTHORITY = 'justice-chain/share-with-authority/v1';
 const ACTION_RELEASE_SHARE = 'justice-chain/release-share/v1';
+const ACTION_FORWARD_PIECE = 'justice-chain/forward-piece/v1';
 
 // What an officer may record after opening a clip.
 const ACCESS_ACTIONS = ['opened', 'exported'];
@@ -468,6 +469,10 @@ class JusticeLedger extends Contract {
    * secp256k1 anchoring key (so the address is really the phone's). The
    * first registration of a node ID stands; repeating it is harmless, and
    * different keys for a registered ID are refused (no key rotation yet).
+   *
+   * Both signatures are kept in the record, so a phone reading it through
+   * the gateway can check the keys itself instead of trusting the gateway.
+   * Records from before that gain them when the phone registers again.
    */
   async RegisterNode(ctx, nodeId, ed25519PublicKey, x25519PublicKey, anchoringAddress, ed25519Signature, anchoringSignature) {
     requireSubmitter(ctx, ANCHORING_MSP, 'register nodes');
@@ -487,14 +492,24 @@ class JusticeLedger extends Contract {
       throw new Error('Anchoring signature does not match the anchoring address');
     }
 
+    const signatures = {
+      ed25519Signature: String(ed25519Signature).trim(),
+      anchoringSignature: normaliseHex(anchoringSignature, 130, 'Anchoring signature'),
+    };
     const key = ctx.stub.createCompositeKey('node', [node]);
     const existing = await readJson(ctx, key);
     if (existing) {
-      if (existing.ed25519PublicKey === edKey && existing.x25519PublicKey === xKey &&
-          existing.anchoringAddress === address) {
+      if (existing.ed25519PublicKey !== edKey || existing.x25519PublicKey !== xKey ||
+          existing.anchoringAddress !== address) {
+        throw new Error(`Node ${node} is already registered with different keys`);
+      }
+      if (existing.ed25519Signature) {
         return JSON.stringify(existing);
       }
-      throw new Error(`Node ${node} is already registered with different keys`);
+      // Registered before signatures were kept: add them.
+      const backfilled = { ...existing, ...signatures };
+      await ctx.stub.putState(key, Buffer.from(JSON.stringify(backfilled)));
+      return JSON.stringify(backfilled);
     }
 
     // Fixed field order so every peer serialises the record identically.
@@ -504,6 +519,7 @@ class JusticeLedger extends Contract {
       x25519PublicKey: xKey,
       anchoringAddress: address,
       registeredAt: txTime(ctx).seconds,
+      ...signatures,
     };
     await ctx.stub.putState(key, Buffer.from(JSON.stringify(record)));
     ctx.stub.setEvent('NodeRegistered', Buffer.from(JSON.stringify(record)));
@@ -521,7 +537,9 @@ class JusticeLedger extends Contract {
    * The victim's phone records who its guardians are, signed with its
    * anchoring key. Key releases by a guardian are only accepted from nodes
    * on this list. [sequence] must grow with every update, so an old,
-   * signed list can't be replayed to bring back a removed guardian.
+   * signed list can't be replayed to bring back a removed guardian. The
+   * signature is kept in the record, so guardians can check the list
+   * themselves before sending a key piece to anyone on it.
    * @param guardianNodeIds JSON array of registered node IDs.
    */
   async SetGuardians(ctx, victimNodeId, guardianNodeIds, sequence, anchoringSignature) {
@@ -564,7 +582,13 @@ class JusticeLedger extends Contract {
       throw new Error('Signature is not from the victim\'s registered anchoring key');
     }
 
-    const record = { victimNodeId: victim, guardians, sequence: seq, updatedAt: txTime(ctx).seconds };
+    const record = {
+      victimNodeId: victim,
+      guardians,
+      sequence: seq,
+      updatedAt: txTime(ctx).seconds,
+      signature: normaliseHex(anchoringSignature, 130, 'Signature'),
+    };
     await ctx.stub.putState(key, Buffer.from(JSON.stringify(record)));
     ctx.stub.setEvent('GuardiansSet', Buffer.from(JSON.stringify(record)));
     return JSON.stringify(record);
@@ -879,6 +903,55 @@ class JusticeLedger extends Contract {
     const delivery = { requestId: id, shareHash: hash, deliveredAt, txId: ctx.stub.getTxID() };
     await ctx.stub.putState(deliveryKey, Buffer.from(JSON.stringify(delivery)));
     return JSON.stringify(delivery);
+  }
+
+  /**
+   * Records that one of the victim's guardians sent their key piece of a
+   * clip to another of the victim's guardians, so the two can open it
+   * together. The piece itself travels through the gateway's mailbox,
+   * sealed to the recipient; the ledger keeps only its hash, signed by the
+   * sender's Ed25519 key, for the clip's chain of custody. Repeating the
+   * same forward is harmless.
+   */
+  async ForwardPiece(ctx, manifestHash, victimNodeId, fromNodeId, toNodeId, pieceHash, signature) {
+    requireSubmitter(ctx, ANCHORING_MSP, 'forward key pieces');
+    const hash = normaliseHex(manifestHash, 64, 'Manifest hash');
+    const victim = normaliseHex(victimNodeId, 16, 'Victim node ID');
+    const sender = await requireNode(ctx, normaliseHex(fromNodeId, 16, 'Sender node ID'), 'Sender');
+    const recipient = await requireNode(ctx, normaliseHex(toNodeId, 16, 'Recipient node ID'), 'Recipient');
+    const piece = normaliseHex(pieceHash, 64, 'Piece hash');
+    if (sender.nodeId === recipient.nodeId) {
+      throw new Error('A guardian cannot forward a piece to themselves');
+    }
+    const list = await readJson(ctx, ctx.stub.createCompositeKey('guardians', [victim]));
+    const guardians = list ? list.guardians : [];
+    if (!guardians.includes(sender.nodeId) || !guardians.includes(recipient.nodeId)) {
+      throw new Error("Both guardians must be on the victim's guardian list");
+    }
+    const payload = `${ACTION_FORWARD_PIECE}|${hash}|${victim}|${sender.nodeId}|${recipient.nodeId}|${piece}`;
+    if (!verifyEd25519(sender.ed25519PublicKey, payload, signature)) {
+      throw new Error("Forward is not signed by the sender's registered Ed25519 key");
+    }
+
+    const key = ctx.stub.createCompositeKey('pieceForward', [hash, sender.nodeId, recipient.nodeId, piece]);
+    const existing = await readJson(ctx, key);
+    if (existing) {
+      return JSON.stringify(existing);
+    }
+    const record = {
+      manifestHash: hash,
+      victimNodeId: victim,
+      fromNodeId: sender.nodeId,
+      toNodeId: recipient.nodeId,
+      pieceHash: piece,
+      signature: String(signature).trim(),
+      forwardedAt: txTime(ctx).seconds,
+    };
+    await ctx.stub.putState(key, Buffer.from(JSON.stringify(record)));
+    await appendAudit(ctx, hash, 'forwarded', { nodeId: sender.nodeId, role: 'guardian' },
+      { toNodeId: recipient.nodeId, pieceHash: piece });
+    ctx.stub.setEvent('PieceForwarded', Buffer.from(JSON.stringify(record)));
+    return JSON.stringify(record);
   }
 
   /**
