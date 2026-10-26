@@ -128,6 +128,8 @@ const PINATA_JWT = (process.env.PINATA_JWT ||
   (fs.existsSync(PINATA_JWT_FILE) ? fs.readFileSync(PINATA_JWT_FILE, 'utf8') : '')).trim();
 const MAX_UPLOAD_BYTES = 300 * 1024 * 1024;
 const UPLOAD_URL_SECONDS = 15 * 60;
+// Pinata checks the cap against the whole multipart body, not just the file.
+const UPLOAD_FORM_ALLOWANCE = 64 * 1024;
 
 // Per caller: phones by node ID, key holders together, registrations by address.
 const rateLimit = createRateLimiter({
@@ -190,7 +192,7 @@ async function uploadUrl(body) {
       network: 'public',
       expires: UPLOAD_URL_SECONDS,
       date: Math.floor(Date.now() / 1000),
-      max_file_size: size,
+      max_file_size: size + UPLOAD_FORM_ALLOWANCE,
     }),
   });
   const result = await response.json().catch(() => ({}));

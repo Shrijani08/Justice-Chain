@@ -112,18 +112,20 @@ class Device:
             self.wake.wait(timeout=RETRY_SECONDS if self.waiting or not linked else IDLE_CHECK_SECONDS)
             self.wake.clear()
             config = network.load_config(DEFAULT_KEYS_DIR)
-            if config is None or not (config.pinata_jwt and config.gateway_url):
+            if config is None or not config.gateway_url:
                 if not warned:
-                    print("No config.json with Pinata and gateway details: clips stay on the card", flush=True)
+                    print("No config.json with gateway details: clips stay on the card", flush=True)
                     warned = True
                 self.waiting = len(outbox.pending(EVIDENCE_DIR))
             else:
                 gateway = network.Gateway(config.gateway_url, config.gateway_api_key)
+                # One-time upload URLs from the gateway; a Pinata key only on old cards.
+                pinata = network.Pinata(config.pinata_jwt) if config.pinata_jwt else network.SignedUrlPinata(gateway)
                 self.check_setup(gateway)
                 certificate = linking.load_certificate(DEFAULT_KEYS_DIR)
                 try:
                     self.waiting = outbox.process_all(
-                        EVIDENCE_DIR, self.identity, network.Pinata(config.pinata_jwt), gateway, certificate
+                        EVIDENCE_DIR, self.identity, pinata, gateway, certificate
                     )
                 except Exception as e:
                     print("Upload error:", repr(e), flush=True)

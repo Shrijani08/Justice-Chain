@@ -3,7 +3,10 @@
 Same calls as the app's pinata_service.dart and fabric_ledger_service.dart.
 The keys come from config.json in the keys folder (never from the code):
 
-    {"pinataJwt": "...", "gatewayUrl": "https://....ngrok-free.dev", "gatewayApiKey": "..."}
+    {"gatewayUrl": "https://....ngrok-free.dev", "gatewayApiKey": "..."}
+
+Uploads use a one-time Pinata URL from the gateway (POST /upload-url), so
+the card holds no Pinata key. An old config with "pinataJwt" still works.
 """
 
 from __future__ import annotations
@@ -70,7 +73,37 @@ class Pinata:
             raise ServiceError(f"No connection to Pinata: {e}") from e
         if response.status_code != 200:
             raise ServiceError(f"Pinata rejected the upload (HTTP {response.status_code})")
-        cid = response.json().get("IpfsHash")
+        cid = _cid_of(response)
+        if not cid:
+            raise ServiceError("Pinata response did not include a CID")
+        return cid
+
+
+def _cid_of(response: requests.Response) -> str:
+    """The CID in a Pinata reply: v3 uploads answer {data: {cid}}, the legacy API {IpfsHash}."""
+    body = response.json()
+    data = body.get("data")
+    return (data.get("cid") if isinstance(data, dict) else None) or body.get("IpfsHash") or ""
+
+
+class SignedUrlPinata:
+    """Uploads through a one-time URL the gateway asks Pinata for."""
+
+    def __init__(self, gateway: "Gateway") -> None:
+        self.gateway = gateway
+
+    def upload(self, path: Path) -> str:
+        size = path.stat().st_size
+        url = self.gateway.upload_url(size)
+        timeout = BASE_TIMEOUT + size // MIN_BYTES_PER_SECOND
+        try:
+            with open(path, "rb") as f:
+                response = requests.post(url, data={"network": "public"}, files={"file": (path.name, f)}, timeout=timeout)
+        except requests.RequestException as e:
+            raise ServiceError(f"No connection to Pinata: {e}") from e
+        if response.status_code != 200:
+            raise ServiceError(f"Pinata rejected the upload (HTTP {response.status_code})")
+        cid = _cid_of(response)
         if not cid:
             raise ServiceError("Pinata response did not include a CID")
         return cid
@@ -110,6 +143,13 @@ class Gateway:
     def setup_for(self, device_node_id: str) -> dict:
         """The owner's latest setup package for this device, or {"found": False}."""
         return self._get(f"/device-setup/{device_node_id}")
+
+    def upload_url(self, size: int) -> str:
+        """A one-time Pinata upload URL for a file of size bytes."""
+        try:
+            return self._post("/upload-url", {"size": size})["url"]
+        except LedgerRefused as e:
+            raise ServiceError(f"The gateway gave no upload URL: {e}") from e
 
     def send_piece(self, envelope: dict) -> dict:
         """Leaves one guardian's sealed key piece in their mailbox."""
