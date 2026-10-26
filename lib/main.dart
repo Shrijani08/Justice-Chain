@@ -3,6 +3,7 @@ import 'core/ai_service.dart';
 import 'core/identity_service.dart';
 import 'core/app_services.dart';
 import 'core/disguise_service.dart';
+import 'core/evidence_lock.dart';
 import 'core/protection_service.dart';
 import 'presentation/design/app_theme.dart';
 import 'presentation/disguise_gate.dart';
@@ -34,6 +35,7 @@ void main() async {
   // Non-secret settings only (config/app.env); secrets never ship in the APK.
   await dotenv.load(fileName: "config/app.env");
   await AppServices.startBackgroundWork();
+  EvidenceLock.lockWhenAppLeaves();
 
   runApp(JusticeChainApp(isRegistered: isRegistered));
 }

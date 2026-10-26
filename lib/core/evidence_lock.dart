@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 
 import 'identity_service.dart';
 
@@ -61,4 +62,21 @@ class EvidenceLock {
   }
 
   static void lock() => _unlockedUntil = null;
+
+  static _LockOnLeave? _observer;
+
+  /// Locks whenever the app goes to the background, whichever screen was
+  /// showing. PinGate only hears it while an evidence screen is open, so
+  /// leaving from the home screen used to keep the unlock.
+  static void lockWhenAppLeaves() {
+    if (_observer != null) return;
+    WidgetsBinding.instance.addObserver(_observer = _LockOnLeave());
+  }
+}
+
+class _LockOnLeave with WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) EvidenceLock.lock();
+  }
 }

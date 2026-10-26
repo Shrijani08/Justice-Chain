@@ -174,6 +174,11 @@ void main() {
         if (shots) {
           await expectLater(find.byType(MaterialApp), matchesGoldenFile('../build/screens/$sizeName/recording.png'));
         }
+        // The clock counts up by itself (it once stayed on its first value).
+        expect(find.text('00:12'), findsOneWidget);
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 1200)));
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(find.text('00:12'), findsNothing);
         isRecording.value = false;
         for (var i = 0; i < 8; i++) {
           await tester.pump(const Duration(milliseconds: 100));

@@ -41,6 +41,17 @@ void main() {
       expect(EvidenceLock.isUnlocked, isFalse);
     });
 
+    testWidgets('leaving the app locks it, whichever screen was open', (tester) async {
+      await tester.runAsync(registerWithPin);
+      await tester.runAsync(() => EvidenceLock.unlock('2468'));
+      EvidenceLock.lockWhenAppLeaves();
+      expect(EvidenceLock.isUnlocked, isTrue);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      expect(EvidenceLock.isUnlocked, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+
     test('five wrong PINs block every try, even the right one, for 30 s', () async {
       await registerWithPin();
       var clock = DateTime(2026, 10, 26, 12);

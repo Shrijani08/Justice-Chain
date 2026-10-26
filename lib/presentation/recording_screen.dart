@@ -24,7 +24,7 @@ class RecordingScreen extends StatefulWidget {
 }
 
 class _RecordingScreenState extends State<RecordingScreen> {
-  late final Timer _clock = Timer.periodic(const Duration(milliseconds: 500), (_) => setState(() {}));
+  late final Timer _clock;
   EffectCleanup? _endWatch;
   bool _stopping = false;
   bool _left = false;
@@ -32,6 +32,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
   @override
   void initState() {
     super.initState();
+    // Started here, not as a lazy field: nothing else reads it before
+    // dispose, so a lazy one never ticked and the clock stayed at 00:00.
+    _clock = Timer.periodic(const Duration(milliseconds: 500), (_) => setState(() {}));
     _endWatch = effect(() {
       if (!isRecording.value) WidgetsBinding.instance.addPostFrameCallback((_) => _toSealed());
     });
