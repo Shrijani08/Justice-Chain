@@ -283,13 +283,24 @@ class JusticeLedger extends Contract {
       throw new Error('capturedAt must be unix seconds');
     }
 
-    const key = ctx.stub.createCompositeKey('evidence', [hash]);
-    const existing = await ctx.stub.getState(key);
-    if (existing && existing.length > 0) {
-      throw new Error('Evidence already stored');
+    const signer = recoverSigner(hash, signature);
+    // A registered phone anchors only with its own registered key, so no
+    // one can file a clip under its node ID.
+    const registered = await readJson(ctx, ctx.stub.createCompositeKey('node', [node]));
+    if (registered && registered.anchoringAddress !== signer) {
+      throw new Error('Signature is not from this node\'s registered anchoring key');
     }
 
-    const signer = recoverSigner(hash, signature);
+    // The first anchor of a hash stays the record. A different signer
+    // anchoring the same hash later is kept as a claim beside it, so whoever
+    // anchors first (someone the clip was relayed to, say) can't stop the
+    // clip's own device from putting its signature on the ledger.
+    const key = ctx.stub.createCompositeKey('evidence', [hash]);
+    const existing = await readJson(ctx, key);
+    const claimKey = ctx.stub.createCompositeKey('evidenceClaim', [hash, signer]);
+    if (existing && (existing.signer === signer || await readJson(ctx, claimKey))) {
+      throw new Error('Evidence already stored');
+    }
     const anchoredAt = txTime(ctx);
 
     // Fixed field order so every peer serialises the record identically.
@@ -303,11 +314,15 @@ class JusticeLedger extends Contract {
       txId: ctx.stub.getTxID(),
     };
 
-    await ctx.stub.putState(key, Buffer.from(JSON.stringify(record)));
+    await ctx.stub.putState(existing ? claimKey : key, Buffer.from(JSON.stringify(record)));
     await ctx.stub.putState(
       ctx.stub.createCompositeKey('history', [node, anchoredAt.sortKey, hash]),
       Buffer.from(hash),
     );
+    if (existing) {
+      ctx.stub.setEvent('EvidenceClaimed', Buffer.from(JSON.stringify(record)));
+      return JSON.stringify({ ...record, claim: true });
+    }
     ctx.stub.setEvent('EvidenceAnchored', Buffer.from(JSON.stringify(record)));
     return JSON.stringify(record);
   }
@@ -323,7 +338,9 @@ class JusticeLedger extends Contract {
     if (!data || data.length === 0) {
       return JSON.stringify({ found: false, manifestHash: hash });
     }
-    return JSON.stringify({ found: true, ...JSON.parse(data.toString('utf8')) });
+    const claims = (await readAll(await ctx.stub.getStateByPartialCompositeKey('evidenceClaim', [hash])))
+      .map((value) => JSON.parse(value.toString('utf8')));
+    return JSON.stringify({ found: true, ...JSON.parse(data.toString('utf8')), claims });
   }
 
   /** Every manifest hash anchored under a node ID, in anchoring order. */
@@ -628,13 +645,9 @@ class JusticeLedger extends Contract {
       throw new Error(`${msp} has no private collection on this channel`);
     }
 
-    const evidence = await readJson(ctx, ctx.stub.createCompositeKey('evidence', [hash]));
-    if (!evidence) {
+    const primary = await readJson(ctx, ctx.stub.createCompositeKey('evidence', [hash]));
+    if (!primary) {
       throw new Error('Evidence not anchored');
-    }
-    const victim = await requireNode(ctx, evidence.nodeId, 'Evidence node');
-    if (evidence.signer !== victim.anchoringAddress) {
-      throw new Error('The evidence was not anchored by its node\'s registered key');
     }
 
     const x = normaliseShareX(shareX);
@@ -645,8 +658,15 @@ class JusticeLedger extends Contract {
 
     const { text: sealedText, hash: shareHash } = readSealedShareFromTransient(ctx);
 
+    // The consent's signer picks the anchor it belongs to (the record or a
+    // later claim); that anchor's node must be registered with that key.
     const payload = `${ACTION_SHARE_WITH_AUTHORITY}|${hash}|${msp}|${x}|${t}|${shareHash}`;
-    if (recoverActionSigner(payload, anchoringSignature) !== victim.anchoringAddress) {
+    const consenter = recoverActionSigner(payload, anchoringSignature);
+    const evidence = primary.signer === consenter
+      ? primary
+      : await readJson(ctx, ctx.stub.createCompositeKey('evidenceClaim', [hash, consenter]));
+    const victim = evidence ? await readJson(ctx, ctx.stub.createCompositeKey('node', [evidence.nodeId])) : null;
+    if (!victim || evidence.signer !== victim.anchoringAddress) {
       throw new Error('Consent is not signed by the victim\'s registered anchoring key');
     }
 

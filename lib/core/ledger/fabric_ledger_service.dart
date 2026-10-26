@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../gateway_auth.dart';
 import 'ledger_service.dart';
 
 /// The gateway rejected a request with the chaincode's own reason, e.g.
@@ -19,26 +20,35 @@ class LedgerRefusedException implements Exception {
 /// SDK, so the gateway submits for them; the device signature inside each
 /// anchor is checked by the chaincode, so the gateway can't forge one.
 ///
-/// [apiKey] is the gateway's shared key (GATEWAY_API_KEY in .env), sent as
-/// X-Api-Key on every request; the gateway refuses requests without it
-/// because it is reachable from the internet through the ngrok tunnel.
+/// Every request is signed by [signer] (GatewayAuth.sign: the phone's
+/// registered Ed25519 key), so the app carries no shared secret. [apiKey]
+/// is for the team's tools and live tests only, sent as X-Api-Key.
 class FabricLedgerService implements LedgerService {
-  FabricLedgerService({required String gatewayUrl, String? apiKey, http.Client? client})
+  FabricLedgerService({required String gatewayUrl, String? apiKey, RequestSigner? signer, http.Client? client})
       : _base = gatewayUrl.trim().replaceFirst(RegExp(r'/+$'), ''),
         _headers = {
           if (apiKey != null && apiKey.trim().isNotEmpty) 'X-Api-Key': apiKey.trim(),
           // ngrok's free plan shows browsers a warning page first; this skips it.
           'ngrok-skip-browser-warning': '1',
         },
+        _signer = signer,
         _client = client ?? http.Client();
 
   final String _base;
   final Map<String, String> _headers;
+  final RequestSigner? _signer;
   final http.Client _client;
 
   // Anchoring waits for the commit on both organisations' peers.
   static const _submitTimeout = Duration(seconds: 90);
   static const _queryTimeout = Duration(seconds: 15);
+
+  /// The headers for one request: the fixed ones plus this phone's signature
+  /// over the exact path and body the gateway will see.
+  Future<Map<String, String>> _headersFor(String method, Uri uri, List<int> body) async => {
+        ..._headers,
+        if (_signer != null) ...await _signer(method, uri.path, body),
+      };
 
   @override
   String get name => 'Hyperledger Fabric';
@@ -53,19 +63,27 @@ class FabricLedgerService implements LedgerService {
     throw StateError('Fabric gateway HTTP ${response.statusCode}: ${message ?? response.body}');
   }
 
-  Future<dynamic> _get(String path) async =>
-      _decode(await _client.get(Uri.parse('$_base$path'), headers: _headers).timeout(_queryTimeout));
+  Future<dynamic> _get(String path) async {
+    final uri = Uri.parse('$_base$path');
+    return _decode(await _client.get(uri, headers: await _headersFor('GET', uri, const [])).timeout(_queryTimeout));
+  }
 
   Future<Map<String, dynamic>> _post(String path, Map<String, Object?> body) async {
+    final uri = Uri.parse('$_base$path');
+    final bytes = utf8.encode(jsonEncode(body));
     final response = await _client
         .post(
-          Uri.parse('$_base$path'),
-          headers: {..._headers, 'Content-Type': 'application/json'},
-          body: jsonEncode(body),
+          uri,
+          headers: {...await _headersFor('POST', uri, bytes), 'Content-Type': 'application/json'},
+          body: bytes,
         )
         .timeout(_submitTimeout);
     return await _decode(response) as Map<String, dynamic>;
   }
+
+  /// A one-time Pinata upload URL for a file of [size] bytes, so the phone
+  /// uploads without holding the Pinata key (gateway POST /upload-url).
+  Future<String> uploadUrl(int size) async => (await _post('/upload-url', {'size': size}))['url'] as String;
 
   @override
   Future<String> recordAnchor({
@@ -156,16 +174,24 @@ class FabricLedgerService implements LedgerService {
         anchoredAtIsLedgerTime: false,
       );
     }
-    return AnchorVerificationResult(
-      found: true,
-      cid: record['cid'] as String,
-      capturedAt: _fromSeconds(record['capturedAt']),
-      anchoredAt: _fromSeconds(record['anchoredAt']),
-      anchoredAtIsLedgerTime: false,
-      nodeId: record['nodeId'] as String,
-      signer: record['signer'] as String,
-    );
+    return _anchorFrom(record, [
+      for (final claim in record['claims'] as List? ?? const []) _anchorFrom(Map<String, dynamic>.from(claim as Map)),
+    ]);
   }
+
+  static AnchorVerificationResult _anchorFrom(Map<String, dynamic> record,
+          [List<AnchorVerificationResult> claims = const []]) =>
+      AnchorVerificationResult(
+        found: true,
+        cid: record['cid'] as String,
+        capturedAt: _fromSeconds(record['capturedAt']),
+        anchoredAt: _fromSeconds(record['anchoredAt']),
+        anchoredAtIsLedgerTime: false,
+        nodeId: record['nodeId'] as String,
+        signer: record['signer'] as String,
+        blockNumber: record['blockNumber'] as int?,
+        claims: claims,
+      );
 
   @override
   Future<AnchorBlock?> findAnchorBlock(String manifestHashHex) async {

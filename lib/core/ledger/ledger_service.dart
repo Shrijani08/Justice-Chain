@@ -8,6 +8,8 @@ class AnchorVerificationResult {
     required this.nodeId,
     required this.signer,
     this.anchoredAtIsLedgerTime = true,
+    this.blockNumber,
+    this.claims = const [],
   });
 
   final bool found;
@@ -27,6 +29,23 @@ class AnchorVerificationResult {
 
   /// Address the device signature recovers to, 0x-prefixed.
   final String signer;
+
+  /// The block this anchor committed in, when the ledger reports it.
+  final int? blockNumber;
+
+  /// Later anchors of the same clip by other signers (Fabric chaincode
+  /// 1.7). Whoever anchors a clip first holds the record, so a clip's own
+  /// device may be one of these if, say, a relaying guardian anchored first.
+  final List<AnchorVerificationResult> claims;
+
+  /// The anchor signed by [address]: this record or one of its claims.
+  AnchorVerificationResult? bySigner(String address) {
+    final wanted = address.toLowerCase();
+    for (final anchor in [this, ...claims]) {
+      if (anchor.found && anchor.signer.toLowerCase() == wanted) return anchor;
+    }
+    return null;
+  }
 }
 
 /// The block an anchor was committed in. Fabric blocks carry no timestamp,

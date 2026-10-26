@@ -11,6 +11,7 @@ import '../core/mesh_service.dart';
 import '../core/outbox_service.dart';
 import '../logic/guardian_manager.dart';
 import 'design/components.dart';
+import 'pin_gate.dart';
 import 'design/tokens.dart';
 import 'evidence_player_screen.dart';
 import 'evidence_viewer_screen.dart' show formatWhen;
@@ -57,7 +58,7 @@ class _GuardianEvidenceScreenState extends State<GuardianEvidenceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return EmberScaffold(
+    return PinGate(child: EmberScaffold(
       glows: const [
         Glow(color: Color(0xFF262B3D), width: 380, height: 320, opacity: 0.95, right: -120, top: -100),
         Glow(color: Ember.wineGlow, width: 260, height: 260, opacity: 0.7, left: -100, top: 380),
@@ -104,7 +105,7 @@ class _GuardianEvidenceScreenState extends State<GuardianEvidenceScreen> {
           },
         ),
       ),
-    );
+    ));
   }
 }
 

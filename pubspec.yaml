@@ -69,7 +69,7 @@ flutter:
     - assets/models/yamnet.tflite
     - assets/models/yamnet_class_map.csv
     - assets/images/sakshya_logo.png
-    - .env
+    - config/app.env
 
   # Dark Ember type, bundled so it never depends on the network.
   fonts:

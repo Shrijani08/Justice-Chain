@@ -31,7 +31,8 @@ void main() async {
   // EmergencyController registers the actual distress callback after the camera
   // is initialized in home_screen.dart.
   await AIService.instance.initModel();
-  await dotenv.load(fileName: ".env");
+  // Non-secret settings only (config/app.env); secrets never ship in the APK.
+  await dotenv.load(fileName: "config/app.env");
   await AppServices.startBackgroundWork();
 
   runApp(JusticeChainApp(isRegistered: isRegistered));

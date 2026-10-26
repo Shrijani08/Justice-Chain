@@ -7,10 +7,15 @@
  * (Org1). The victim's device signature travels inside the transaction
  * and is checked by the chaincode, so this gateway can't forge an anchor.
  *
- * Every route except /health needs the X-Api-Key header (see API_KEY below).
+ * Every route except /health and POST /nodes needs a caller: a phone signs
+ * each request with its registered Ed25519 key (auth.js), and the SOS device
+ * and the team's tools send the X-Api-Key header. A phone may read only its
+ * own records and those of victims it guards.
  *
  * Routes:
  *   GET  /health               ledger height, to check the connection
+ *   POST /upload-url           {size}: a one-time Pinata upload URL, so phones
+ *                              upload clips without holding the Pinata key
  *   POST /anchor               {manifestHash, cid, capturedAt, nodeId, signature}
  *   GET  /verify/:manifestHash the record, plus the block it committed in
  *   GET  /history/:nodeId      manifest hashes anchored by one node
@@ -75,6 +80,7 @@ const { connect, signers } = require('@hyperledger/fabric-gateway');
 const { common } = require('@hyperledger/fabric-protos');
 const { createMailbox, pieceHashOf } = require('./mailbox');
 const { createDeviceDesk } = require('./device');
+const { createAuth, createRateLimiter } = require('./auth');
 
 const ORGS_DIR = process.env.FABRIC_ORGS_DIR ||
   '\\\\wsl.localhost\\Ubuntu\\home\\sara_khurshida\\fabric\\fabric-samples\\test-network\\organizations';
@@ -105,12 +111,9 @@ const deviceDesk = createDeviceDesk({
   mailbox,
 });
 
-// The gateway is reachable from the internet through the ngrok tunnel, so
-// every route except /health needs the shared API key in the X-Api-Key
-// header. Signatures already stop forged records; the key stops strangers
-// from using the gateway at all. The key comes from GATEWAY_API_KEY or the
-// git-ignored file api-key.txt next to this script. Without one, the
-// gateway refuses to start unless GATEWAY_ALLOW_NO_KEY=1 (local tests only).
+// The gateway is reachable from the internet through the ngrok tunnel. The
+// shared API key is for the SOS device and the team's tools only; it comes
+// from GATEWAY_API_KEY or the git-ignored api-key.txt next to this script.
 const API_KEY_FILE = path.join(__dirname, 'api-key.txt');
 const API_KEY = (process.env.GATEWAY_API_KEY ||
   (fs.existsSync(API_KEY_FILE) ? fs.readFileSync(API_KEY_FILE, 'utf8') : '')).trim();
@@ -119,12 +122,19 @@ if (!API_KEY && process.env.GATEWAY_ALLOW_NO_KEY !== '1') {
   process.exit(1);
 }
 
-function hasApiKey(req) {
-  if (!API_KEY) return true;
-  const given = Buffer.from(String(req.headers['x-api-key'] || ''), 'utf8');
-  const expected = Buffer.from(API_KEY, 'utf8');
-  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
-}
+// The Pinata key stays here: phones get one-time upload URLs (POST /upload-url).
+const PINATA_JWT_FILE = path.join(__dirname, 'pinata-jwt.txt');
+const PINATA_JWT = (process.env.PINATA_JWT ||
+  (fs.existsSync(PINATA_JWT_FILE) ? fs.readFileSync(PINATA_JWT_FILE, 'utf8') : '')).trim();
+const MAX_UPLOAD_BYTES = 300 * 1024 * 1024;
+const UPLOAD_URL_SECONDS = 15 * 60;
+
+// Per caller: phones by node ID, key holders together, registrations by address.
+const rateLimit = createRateLimiter({
+  requests: { max: 120, windowSeconds: 60 },
+  uploads: { max: 30, windowSeconds: 3600 },
+  registrations: { max: 20, windowSeconds: 3600 },
+});
 
 function connectGateway() {
   const client = new grpc.Client(
@@ -153,6 +163,42 @@ function connectGateway() {
 
 const { contract, qscc } = connectGateway();
 const utf8 = new TextDecoder();
+
+const auth = createAuth({
+  apiKey: API_KEY,
+  ledger: {
+    getNode: (id) => evaluate('GetNode', id),
+    getGuardians: (id) => evaluate('GetGuardians', id),
+    getAccessRequest: (id) => evaluate('GetAccessRequest', id),
+    verify: (hash) => verify(hash),
+  },
+});
+
+/** A one-time Pinata URL for one upload of at most [size] bytes. */
+async function uploadUrl(body) {
+  const size = Number(body.size);
+  if (!Number.isInteger(size) || size < 1 || size > MAX_UPLOAD_BYTES) {
+    throw Object.assign(new Error(`size must be 1-${MAX_UPLOAD_BYTES} bytes`), { httpStatus: 400 });
+  }
+  if (!PINATA_JWT) {
+    throw Object.assign(new Error('The gateway has no Pinata key (pinata-jwt.txt)'), { httpStatus: 503 });
+  }
+  const response = await fetch('https://uploads.pinata.cloud/v3/files/sign', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${PINATA_JWT}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      network: 'public',
+      expires: UPLOAD_URL_SECONDS,
+      date: Math.floor(Date.now() / 1000),
+      max_file_size: size,
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || typeof result.data !== 'string') {
+    throw Object.assign(new Error(`Pinata refused an upload URL (HTTP ${response.status})`), { httpStatus: 502 });
+  }
+  return { url: result.data, expiresIn: UPLOAD_URL_SECONDS };
+}
 
 async function ledgerHeight() {
   const bytes = await qscc.evaluateTransaction('GetChainInfo', CONFIG.channel);
@@ -274,7 +320,12 @@ async function ackPieces(nodeId, body) {
 
 async function verify(manifestHash) {
   const result = JSON.parse(utf8.decode(await contract.evaluateTransaction('VerifyEvidence', manifestHash)));
-  if (result.found) result.blockNumber = await blockNumberOf(result.txId);
+  if (result.found) {
+    result.blockNumber = await blockNumberOf(result.txId);
+    // Later anchors of the same clip by other signers (chaincode 1.7).
+    result.claims = await Promise.all((result.claims || []).map(async (claim) =>
+      ({ ...claim, blockNumber: await blockNumberOf(claim.txId) })));
+  }
   return result;
 }
 
@@ -304,7 +355,7 @@ function toHttpError(err) {
   return { status: 503, message: 'Fabric network unavailable' };
 }
 
-function readJson(req) {
+function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -317,15 +368,17 @@ function readJson(req) {
         chunks.push(chunk);
       }
     });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
-      } catch {
-        reject(Object.assign(new Error('Body must be JSON'), { httpStatus: 400 }));
-      }
-    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+function parseJson(body) {
+  try {
+    return JSON.parse(body.toString('utf8') || '{}');
+  } catch {
+    throw Object.assign(new Error('Body must be JSON'), { httpStatus: 400 });
+  }
 }
 
 function send(res, status, payload) {
@@ -339,13 +392,27 @@ const server = http.createServer(async (req, res) => {
   const started = Date.now();
   let status = 200;
   try {
+    const body = req.method === 'POST' ? await readBody(req) : Buffer.alloc(0);
+    const json = () => parseJson(body);
+    const caller = url.pathname === '/health' ? null : await auth.identify(req, url.pathname, body);
     if (req.method === 'GET' && url.pathname === '/health') {
       send(res, 200, { ok: true, channel: CONFIG.channel, chaincode: CONFIG.chaincode, height: await ledgerHeight() });
-    } else if (!hasApiKey(req)) {
+    } else if (req.method === 'POST' && url.pathname === '/nodes' && !caller) {
+      // A phone registers before it can sign requests; the registration
+      // carries both of its signatures, which the chaincode checks.
+      rateLimit('registrations', req.socket.remoteAddress || 'unknown');
+      send(res, 200, await registerNode(json()));
+    } else if (!caller) {
       status = 401;
-      send(res, 401, { error: 'Missing or wrong API key' });
+      send(res, 401, { error: 'Sign the request with your registered key, or send the API key' });
+    } else if (rateLimit('requests', caller.nodeId || 'api-key') ||
+               await auth.authorize(caller, req.method, parts)) {
+      // Neither returns a value; they throw 429 or 403.
+    } else if (req.method === 'POST' && url.pathname === '/upload-url') {
+      rateLimit('uploads', caller.nodeId || 'api-key');
+      send(res, 200, await uploadUrl(json()));
     } else if (req.method === 'POST' && url.pathname === '/anchor') {
-      send(res, 200, await anchor(await readJson(req)));
+      send(res, 200, await anchor(json()));
     } else if (req.method === 'GET' && parts[0] === 'verify' && parts.length === 2) {
       send(res, 200, await verify(parts[1]));
     } else if (req.method === 'GET' && parts[0] === 'history' && parts.length === 2) {
@@ -355,15 +422,15 @@ const server = http.createServer(async (req, res) => {
     } else if (req.method === 'GET' && parts[0] === 'authorities' && parts.length === 2) {
       send(res, 200, await authority(parts[1]));
     } else if (req.method === 'POST' && url.pathname === '/nodes') {
-      send(res, 200, await registerNode(await readJson(req)));
+      send(res, 200, await registerNode(json()));
     } else if (req.method === 'GET' && parts[0] === 'nodes' && parts.length === 2) {
       send(res, 200, await evaluate('GetNode', parts[1]));
     } else if (req.method === 'POST' && url.pathname === '/guardians') {
-      send(res, 200, await setGuardians(await readJson(req)));
+      send(res, 200, await setGuardians(json()));
     } else if (req.method === 'GET' && parts[0] === 'guardians' && parts.length === 2) {
       send(res, 200, await evaluate('GetGuardians', parts[1]));
     } else if (req.method === 'POST' && url.pathname === '/authority-shares') {
-      send(res, 200, await shareWithAuthority(await readJson(req)));
+      send(res, 200, await shareWithAuthority(json()));
     } else if (req.method === 'GET' && parts[0] === 'authority-shares' && parts.length === 2) {
       send(res, 200, await evaluate('ListAuthorityShares', parts[1]));
     } else if (req.method === 'GET' && parts[0] === 'access-requests' && parts.length === 2) {
@@ -371,21 +438,21 @@ const server = http.createServer(async (req, res) => {
     } else if (req.method === 'GET' && parts[0] === 'access-request' && parts.length === 2) {
       send(res, 200, await evaluate('GetAccessRequest', parts[1]));
     } else if (req.method === 'POST' && url.pathname === '/releases') {
-      send(res, 200, await releaseShare(await readJson(req)));
+      send(res, 200, await releaseShare(json()));
     } else if (req.method === 'GET' && parts[0] === 'audit' && parts.length === 2) {
       send(res, 200, await evaluate('GetAuditTrail', parts[1]));
     } else if (req.method === 'POST' && url.pathname === '/pieces') {
-      send(res, 200, await forwardPiece(await readJson(req)));
+      send(res, 200, await forwardPiece(json()));
     } else if (req.method === 'GET' && parts[0] === 'pieces' && parts.length === 2) {
       send(res, 200, mailbox.list(parts[1]));
     } else if (req.method === 'POST' && parts[0] === 'pieces' && parts.length === 3 && parts[2] === 'ack') {
-      send(res, 200, await ackPieces(parts[1], await readJson(req)));
+      send(res, 200, await ackPieces(parts[1], json()));
     } else if (req.method === 'POST' && parts[0] === 'device-setup' && parts.length === 2) {
-      send(res, 200, await deviceDesk.putSetup(parts[1], await readJson(req)));
+      send(res, 200, await deviceDesk.putSetup(parts[1], json()));
     } else if (req.method === 'GET' && parts[0] === 'device-setup' && parts.length === 2) {
       send(res, 200, deviceDesk.getSetup(parts[1]));
     } else if (req.method === 'POST' && url.pathname === '/device-pieces') {
-      send(res, 200, await deviceDesk.putPiece(await readJson(req)));
+      send(res, 200, await deviceDesk.putPiece(json()));
     } else {
       status = 404;
       send(res, 404, { error: 'Not found' });

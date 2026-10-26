@@ -41,7 +41,8 @@ class _FakeLedger implements LedgerService {
       capturedAt: capturedAt,
       anchoredAt: DateTime.now(),
       nodeId: nodeId,
-      signer: 'signer',
+      // The phone anchoring is the one under test, so its address is the signer.
+      signer: (await IdentityService.getAnchoringCredentials()).address.eip55With0x,
     );
     return 'tx';
   }

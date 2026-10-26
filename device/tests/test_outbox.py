@@ -27,17 +27,29 @@ class FakeGateway:
         self.fail = fail
         self.refuse = refuse
         self.ledger = {}
+        self.claims = {}
 
     def verify(self, manifest_hash):
         if self.fail:
             raise ServiceError("offline")
-        found = manifest_hash in self.ledger
-        return {"found": found, **({"blockNumber": 7} if found else {})}
+        if manifest_hash not in self.ledger:
+            return {"found": False}
+        signature = self.ledger[manifest_hash][3]
+        return {
+            "found": True,
+            "blockNumber": 7,
+            "signer": cc.recover_anchor_signer(manifest_hash, signature).lower(),
+            "claims": self.claims.get(manifest_hash, []),
+        }
 
     def anchor(self, manifest_hash, cid, captured_at, node_id, signature):
         if self.refuse:
             raise LedgerRefused("Evidence already stored")
         assert len(signature) == 130
+        if manifest_hash in self.ledger:  # chaincode 1.7: a later signer becomes a claim
+            signer = cc.recover_anchor_signer(manifest_hash, signature).lower()
+            self.claims.setdefault(manifest_hash, []).append({"signer": signer, "blockNumber": 8})
+            return f"tx-claim-{len(self.claims[manifest_hash])}"
         self.ledger[manifest_hash] = (cid, captured_at, node_id, signature)
         return f"tx-{len(self.ledger)}"
 
@@ -89,10 +101,25 @@ def test_offline_keeps_the_clip_waiting_and_a_later_pass_finishes_it(tmp_path, d
 def test_an_anchor_that_already_landed_is_not_sent_again(tmp_path, device):
     record = locked_clip(tmp_path, device)
     gateway = FakeGateway()
-    gateway.ledger[record["hash"]] = ("Qm1", 0, device.node_id, "x")
+    signature = cc.sign_anchor(device.anchoring_private_key_hex, record["hash"])
+    gateway.ledger[record["hash"]] = ("Qm1", 0, device.node_id, signature)
     gateway.refuse = True  # anchoring again would be refused
     assert outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway) == 0
     assert saved(tmp_path, record)["status"] == "anchored"
+
+
+def test_a_clip_someone_else_anchored_first_is_still_anchored_by_the_device(tmp_path, device):
+    record = locked_clip(tmp_path, device)
+    gateway = FakeGateway()
+    other = identity.load_or_create(tmp_path / "other-keys")
+    gateway.ledger[record["hash"]] = ("QmTheirs", 0, other.node_id, cc.sign_anchor(other.anchoring_private_key_hex, record["hash"]))
+
+    assert outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway) == 0
+
+    after = saved(tmp_path, record)
+    assert after["status"] == "anchored" and after["anchorTxId"] == "tx-claim-1"
+    assert after["anchorConflict"] == other.anchoring_address.lower()
+    assert gateway.claims[record["hash"]][0]["signer"] == device.anchoring_address.lower()
 
 
 def test_a_refused_clip_stops_retrying(tmp_path, device):

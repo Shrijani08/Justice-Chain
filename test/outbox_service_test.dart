@@ -160,8 +160,8 @@ void main() {
         calls++;
         throw Exception('permanent');
       };
-      await OutboxService.enqueueUpload('rec1');
-      const id = 'ipfs_upload:rec1';
+      await OutboxService.enqueueAuthorityShare('rec1');
+      const id = 'authority_share:rec1';
       await box.put(id, job(id)..['attempts'] = 18);
 
       await OutboxService.process();
@@ -177,6 +177,23 @@ void main() {
       await OutboxService.process();
       expect(calls, 2);
       expect(job(id)['attempts'], 20);
+    });
+
+    test('evidence uploads and anchors keep retrying past 20 attempts', () async {
+      OutboxService.dispatchOverride = (_, __) async => throw Exception('offline');
+      await OutboxService.enqueueUpload('rec1');
+      await OutboxService.enqueueAnchor('rec2');
+      await OutboxService.enqueueRelayUpload('rec3');
+      for (final id in ['ipfs_upload:rec1', 'anchor:rec2', 'relay_upload:rec3']) {
+        await box.put(id, job(id)..['attempts'] = 24);
+      }
+
+      await OutboxService.process();
+
+      for (final id in ['ipfs_upload:rec1', 'anchor:rec2', 'relay_upload:rec3']) {
+        expect(job(id)['attempts'], 25);
+        expect(job(id)['failed'], false, reason: id);
+      }
     });
 
     test('JobNotReady leaves the job queued without using an attempt', () async {
@@ -255,6 +272,25 @@ void main() {
       expect(dispatched.single.$2['recordKey'], 'rec1');
       expect(box.containsKey('ipfs_upload:rec1'), isFalse);
       expect(job('ipfs_upload:rec2')['failed'], true);
+    });
+  });
+
+  group('reviveEvidenceJobs', () {
+    test('brings back evidence jobs an older build gave up on, not others', () async {
+      await OutboxService.enqueueUpload('rec1');
+      await OutboxService.enqueueAuthorityShare('rec1');
+      for (final id in ['ipfs_upload:rec1', 'authority_share:rec1']) {
+        await box.put(id, job(id)
+          ..['failed'] = true
+          ..['attempts'] = 20);
+      }
+
+      await OutboxService.reviveEvidenceJobs();
+      await OutboxService.process();
+
+      expect(dispatched.map((d) => d.$1).toList(), [OutboxService.jobUpload]);
+      expect(box.containsKey('ipfs_upload:rec1'), isFalse);
+      expect(job('authority_share:rec1')['failed'], true);
     });
   });
 

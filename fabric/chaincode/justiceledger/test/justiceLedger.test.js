@@ -500,12 +500,13 @@ test('sharing needs an anchored clip from the same registered victim and an acti
   await assert.rejects(
     ledger.ShareWithAuthority(ctxFor(), OTHER_HASH, 'SimPoliceMSP', '3', '2', consentFor(OTHER_HASH)), /not anchored/);
 
-  // A clip anchored under the victim's node ID but signed by another key.
+  // A clip anchored by another key: the victim has no anchor of it to consent for.
   const thirdHash = 'bb'.repeat(32);
-  await ledger.AnchorEvidence(gateway, thirdHash, CID, '1', victim.nodeId, makePhone('thief').signHash(thirdHash));
+  const thief = makePhone('thief');
+  await ledger.AnchorEvidence(gateway, thirdHash, CID, '1', thief.nodeId, thief.signHash(thirdHash));
   await assert.rejects(
     ledger.ShareWithAuthority(ctxFor(), thirdHash, 'SimPoliceMSP', '3', '2', consentFor(thirdHash)),
-    /not anchored by its node.s registered key/);
+    /Consent is not signed/);
 
   // A revoked authority.
   await ledger.RevokeAuthority(makeCtx({ world, attrs: { 'hf.Type': 'admin' } }), 'SimPoliceMSP');
@@ -746,4 +747,59 @@ test("a forward is refused unless both are the victim's guardians and the sender
       g1.edSign(forwardPayload(HASH, victim, g1, g2, pieceHash))),
     /Only Org1MSP may forward/,
   );
+});
+
+test('a registered phone can only anchor with its own registered key', async () => {
+  const ctx = makeCtx();
+  const victim = makePhone('victim');
+  const thief = makePhone('thief');
+  await register(ctx, victim);
+  await assert.rejects(ledger.AnchorEvidence(ctx, HASH, CID, '1', victim.nodeId, thief.signHash(HASH)),
+    /not from this node's registered anchoring key/);
+  const record = JSON.parse(await ledger.AnchorEvidence(ctx, HASH, CID, '1', victim.nodeId, victim.signHash(HASH)));
+  assert.equal(record.signer, victim.address);
+});
+
+test('anchoring a hash someone else anchored first keeps both, the later one as a claim', async () => {
+  const ctx = makeCtx();
+  const victim = makePhone('victim');
+  const guardian = makePhone('guardian');
+  await register(ctx, victim);
+  // A guardian the clip was relayed to anchors it first, under their own key.
+  await ledger.AnchorEvidence(ctx, HASH, 'bafy-wrong', '1', guardian.nodeId, guardian.signHash(HASH));
+
+  const claim = JSON.parse(await ledger.AnchorEvidence(ctx, HASH, CID, '1', victim.nodeId, victim.signHash(HASH)));
+  assert.equal(claim.claim, true);
+  assert.equal(ctx.events.at(-1).name, 'EvidenceClaimed');
+
+  const found = JSON.parse(await ledger.VerifyEvidence(ctx, HASH));
+  assert.equal(found.signer, guardian.address);
+  assert.deepEqual(found.claims.map((c) => [c.signer, c.cid, c.nodeId]), [[victim.address, CID, victim.nodeId]]);
+  assert.deepEqual(JSON.parse(await ledger.GetEvidenceHistory(ctx, victim.nodeId)), [HASH]);
+
+  // The same signer can't anchor twice, as the record or as a claim.
+  await assert.rejects(ledger.AnchorEvidence(ctx, HASH, CID, '1', victim.nodeId, victim.signHash(HASH)), /already stored/);
+  await assert.rejects(ledger.AnchorEvidence(ctx, HASH, CID, '1', guardian.nodeId, guardian.signHash(HASH)), /already stored/);
+});
+
+test('a victim whose clip was anchored first by someone else can still share it with an authority', async () => {
+  const world = { state: new Map(), privateData: new Map() };
+  const gateway = makeCtx({ world });
+  const victim = makePhone('victim');
+  const other = makePhone('other');
+  await register(gateway, victim);
+  await register(gateway, other);
+  await ledger.AnchorEvidence(gateway, HASH, CID, '1', other.nodeId, other.signHash(HASH));
+  await ledger.AnchorEvidence(gateway, HASH, CID, '1', victim.nodeId, victim.signHash(HASH));
+  await ledger.RegisterAuthority(makeCtx({ world, attrs: { 'hf.Type': 'admin' } }),
+    'SimPoliceMSP', POLICE_NAME, POLICE_KEY, 'true');
+  const sealedShare = nodeCrypto.randomBytes(61).toString('base64');
+
+  const consent = JSON.parse(await share(world, victim, sealedShare).result);
+  assert.equal(consent.victimNodeId, victim.nodeId);
+
+  // Someone with no anchor of the clip can't share it.
+  const stranger = makePhone('stranger');
+  await register(gateway, stranger);
+  await assert.rejects(share(world, stranger, sealedShare, { msp: 'SimPoliceMSP', x: 4 }).result, /Consent is not signed/);
 });

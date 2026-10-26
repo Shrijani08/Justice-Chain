@@ -248,6 +248,9 @@ class IdentityService {
     return _constantTimeEquals(candidateHash, storedHash);
   }
 
+  /// Whether a vault PIN has been registered on this phone.
+  static Future<bool> hasPin() => _storage.containsKey(key: 'node_pin_hash');
+
   /// Checks if a node has been registered yet
   static Future<bool> isRegistered() async {
     final name = await _storage.read(key: 'node_name');

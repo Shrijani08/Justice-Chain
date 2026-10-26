@@ -46,11 +46,13 @@ class RecoveryService {
     final hashes = await AnchoringService.getEvidenceHistory(me);
     if (hashes == null) throw StateError('The ledger could not be reached. Try again when online.');
 
+    final myAddress = (await IdentityService.getAnchoringCredentials()).address.eip55With0x;
     var added = 0;
     for (final hash in hashes) {
       if (_vault.containsKey(hash)) continue;
-      final anchor = await AnchoringService.verifyEvidence(hash);
-      if (anchor == null || !anchor.found || anchor.cid.isEmpty) continue;
+      // This identity's own anchor, which may be a claim beside someone else's.
+      final anchor = (await AnchoringService.verifyEvidence(hash))?.bySigner(myAddress);
+      if (anchor == null || anchor.cid.isEmpty) continue;
       await _vault.put(hash, {
         'hash': hash,
         'cid': anchor.cid,

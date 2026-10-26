@@ -11,6 +11,7 @@ import '../logic/guardian_manager.dart';
 import 'anchoring_service.dart';
 import 'evidence_encryptor.dart';
 import 'evidence_vault_service.dart';
+import 'gateway_auth.dart';
 import 'identity_service.dart';
 import 'ledger/fabric_ledger_service.dart';
 import 'mesh_service.dart';
@@ -57,7 +58,11 @@ class AuthorityService {
       if ((dotenv.env['LEDGER'] ?? '').trim().toLowerCase() != 'fabric') return null;
       final url = dotenv.env['GATEWAY_URL']?.trim() ?? '';
       if (url.isEmpty) return null;
-      return _gateway ??= FabricLedgerService(gatewayUrl: url, apiKey: dotenv.env['GATEWAY_API_KEY']);
+      return _gateway ??= FabricLedgerService(
+        gatewayUrl: url,
+        apiKey: dotenv.env['GATEWAY_API_KEY'],
+        signer: GatewayAuth.sign,
+      );
     } catch (_) {
       return null; // .env not loaded (tests, early start-up)
     }

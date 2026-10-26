@@ -79,6 +79,16 @@ def pending(evidence_dir: Path, certificate: dict | None = None) -> list[Path]:
     return paths
 
 
+def _own_anchor(found: dict, address: str) -> dict | None:
+    """The ledger anchor signed by address: the record or one of its claims."""
+    if not found.get("found"):
+        return None
+    for anchor in [found, *found.get("claims", [])]:
+        if str(anchor.get("signer", "")).lower() == address.lower():
+            return anchor
+    return None
+
+
 def _anchor(path: Path, record: dict, identity: Identity, pinata, gateway) -> None:
     if record.get("cid") is None:
         record["cid"] = pinata.upload(path.parent / record["file"])
@@ -88,12 +98,17 @@ def _anchor(path: Path, record: dict, identity: Identity, pinata, gateway) -> No
 
     # A previous attempt may have reached the ledger before the device lost
     # power; the chaincode refuses duplicates, so look before anchoring.
+    # Only the device's own anchor counts: someone else may have anchored the
+    # clip first, and the ledger keeps the device's later anchor as a claim.
     existing = gateway.verify(record["hash"])
-    if existing.get("found"):
+    own = _own_anchor(existing, identity.anchoring_address)
+    if own is not None:
         record["status"] = DONE
-        record.setdefault("blockNumber", existing.get("blockNumber"))
+        record.setdefault("blockNumber", own.get("blockNumber"))
         _save(path, record)
         return
+    if existing.get("found"):
+        record["anchorConflict"] = existing.get("signer")
 
     captured_at = int(datetime.fromisoformat(record["timestamp"]).timestamp())
     signature = cc.sign_anchor(identity.anchoring_private_key_hex, record["hash"])

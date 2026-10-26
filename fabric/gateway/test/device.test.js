@@ -124,3 +124,15 @@ test("pieces only go to the owner's guardians, for clips the device anchored", a
     /not anchored by this device/,
   );
 });
+
+test("a device clip someone else anchored first still takes pieces, from the device's own claim", async () => {
+  const { desk: d, mailbox } = desk({
+    verifyEvidence: async (hash) => ({
+      found: true, manifestHash: hash, nodeId: '0'.repeat(16), signer: '0x0', blockNumber: 280,
+      claims: [{ manifestHash: hash, nodeId: DEVICE.nodeId, signer: DEVICE_ADDRESS.toLowerCase(), blockNumber: 284 }],
+    }),
+  });
+  const stored = await d.putPiece(piece());
+  assert.equal(stored.blockNumber, 284);
+  assert.equal(mailbox.list(GUARDIAN).length, 1);
+});

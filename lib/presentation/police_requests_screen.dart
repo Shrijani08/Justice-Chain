@@ -5,6 +5,7 @@ import '../core/authority_service.dart';
 import '../core/mesh_service.dart';
 import '../logic/guardian_manager.dart';
 import 'design/components.dart';
+import 'pin_gate.dart';
 import 'design/tokens.dart';
 import 'evidence_viewer_screen.dart';
 
@@ -39,7 +40,7 @@ class _PoliceRequestsScreenState extends State<PoliceRequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return EmberScaffold(
+    return PinGate(child: EmberScaffold(
       glows: const [
         Glow(color: Ember.wineGlow, width: 380, height: 300, opacity: 0.9, left: -120, top: -80),
         Glow(color: Ember.plumGlow, width: 260, height: 260, right: -110, bottom: 120),
@@ -128,7 +129,7 @@ class _PoliceRequestsScreenState extends State<PoliceRequestsScreen> {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 

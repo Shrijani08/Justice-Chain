@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:web3dart/web3dart.dart';
 
+import 'gateway_auth.dart';
 import 'identity_service.dart';
 import 'ledger/evm_ledger_service.dart';
 import 'ledger/fabric_ledger_service.dart';
@@ -48,7 +49,11 @@ class AnchoringService {
           contractAddress: required('CONTRACT_ADDRESS'),
           submitterPrivateKey: required('HARDHAT_SUBMITTER_PRIVATE_KEY'),
         ),
-      'fabric' => FabricLedgerService(gatewayUrl: required('GATEWAY_URL'), apiKey: env['GATEWAY_API_KEY']),
+      'fabric' => FabricLedgerService(
+          gatewayUrl: required('GATEWAY_URL'),
+          apiKey: env['GATEWAY_API_KEY'],
+          signer: GatewayAuth.sign,
+        ),
       _ => throw StateError('LEDGER in .env must be "evm" or "fabric", not "$ledger"'),
     };
   }

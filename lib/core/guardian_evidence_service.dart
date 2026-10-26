@@ -205,22 +205,37 @@ class GuardianEvidenceService {
     } else if (!anchor.found) {
       checks.add(const VerificationCheck('Anchored on-chain', false, 'No on-chain record for this hash yet'));
     } else {
-      final cidMatches = cid == null || anchor.cid == cid;
+      // The victim's (or her device's) own anchor: whoever anchored the clip
+      // first holds the record, and hers may be a later claim beside it.
+      final expected = sosDevice == null
+          ? _pairedAddress(incident.victimNodeId)
+          : (sosDevice['deviceAnchoringAddress'] as String?);
+      final own = (expected == null ? null : anchor.bySigner(expected)) ?? anchor;
+      final cidMatches = cid == null || own.cid == cid;
       checks.add(VerificationCheck(
         'On-chain CID matches',
         cidMatches,
-        cidMatches ? anchor.cid : 'chain has ${anchor.cid}, copy came from $cid',
+        cidMatches ? own.cid : 'chain has ${own.cid}, copy came from $cid',
       ));
       checks.add(sosDevice == null
-          ? _checkSigner(anchor.signer, incident.victimNodeId)
-          : _checkSosDeviceSigner(anchor.signer, sosDevice));
+          ? _checkSigner(own.signer, incident.victimNodeId)
+          : _checkSosDeviceSigner(own.signer, sosDevice));
+      if (!identical(own, anchor)) {
+        checks.add(VerificationCheck(
+          'Anchored first by someone else',
+          null,
+          '${anchor.signer} anchored this clip first; the victim\'s own anchor is kept beside it',
+        ));
+      }
 
-      final block = await AnchoringService.findAnchorBlock(manifestHash);
-      anchorSummary = 'Verified: ${describeAnchor(block, anchor)}';
+      final block = own.blockNumber != null
+          ? (blockNumber: own.blockNumber!, blockTime: null)
+          : await AnchoringService.findAnchorBlock(manifestHash);
+      anchorSummary = 'Verified: ${describeAnchor(block, own)}';
       checks.add(VerificationCheck(
         'Anchored on-chain',
         true,
-        '${anchorSummary.replaceFirst('Verified: ', '')} · device clock said ${_fmt(anchor.capturedAt)}',
+        '${anchorSummary.replaceFirst('Verified: ', '')} · device clock said ${_fmt(own.capturedAt)}',
       ));
     }
 
@@ -314,10 +329,14 @@ class GuardianEvidenceService {
     return VerificationCheck(label, ok, ok ? chainSigner : 'expected $expected, chain has $chainSigner');
   }
 
+  static String? _pairedAddress(String victimNodeId) {
+    final contact = GuardianManager.getAllContacts()[victimNodeId];
+    return contact is Map ? contact['anchoring_address'] as String? : null;
+  }
+
   static VerificationCheck _checkSigner(String chainSigner, String victimNodeId) {
     const label = 'On-chain signer is the victim';
-    final contact = GuardianManager.getAllContacts()[victimNodeId];
-    final expected = contact is Map ? contact['anchoring_address'] as String? : null;
+    final expected = _pairedAddress(victimNodeId);
     if (expected == null) {
       return VerificationCheck(label, null, 'Signer $chainSigner (no address saved at pairing to compare)');
     }

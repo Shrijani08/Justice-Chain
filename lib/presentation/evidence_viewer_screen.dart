@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/recovery_service.dart';
 import 'design/components.dart';
+import 'pin_gate.dart';
 import 'design/tokens.dart';
 import 'evidence_player_screen.dart';
 
@@ -24,7 +25,7 @@ class _EvidenceViewerScreenState extends State<EvidenceViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return EmberScaffold(
+    return PinGate(child: EmberScaffold(
       glows: const [
         Glow(color: Color(0xFF3A1F55), width: 380, height: 320, opacity: 0.9, left: -100, top: -100),
         Glow(color: Ember.wineGlow, width: 260, height: 260, opacity: 0.7, right: -100, top: 360),
@@ -108,7 +109,7 @@ class _EvidenceViewerScreenState extends State<EvidenceViewerScreen> {
           );
         },
       ),
-    );
+    ));
   }
 }
 

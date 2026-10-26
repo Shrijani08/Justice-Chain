@@ -209,8 +209,16 @@ class EvidenceVaultService {
       throw StateError('Chain unreachable for anchor pre-check');
     }
 
+    // Someone else (a relaying guardian, say) may have anchored the clip
+    // first under their own key. Only this phone's own signature counts, so
+    // anchor anyway: the ledger keeps it as a claim beside the first record.
+    final myAddress = (await IdentityService.getAnchoringCredentials()).address.eip55With0x;
+    if (existing.found && existing.signer.toLowerCase() != myAddress.toLowerCase()) {
+      record['anchorConflict'] = existing.signer;
+    }
+
     String? txHash;
-    if (!existing.found) {
+    if (existing.bySigner(myAddress) == null) {
       final capturedAt =
           DateTime.tryParse(record['timestamp'] as String? ?? '') ??
           DateTime.now();
@@ -383,12 +391,16 @@ class EvidenceVaultService {
       developer.log('Relayed clip uploaded on victim\'s behalf. CID: $cid', name: 'JusticeChain.Vault');
     }
 
-    // The victim may have anchored it themselves once back online.
+    // The victim may have anchored it themselves once back online. Any
+    // other signer's anchor doesn't count: this relay carries her signature.
     final existing = await AnchoringService.verifyEvidence(manifestHash);
     if (existing == null) {
       throw StateError('Chain unreachable for anchor pre-check');
     }
-    if (!existing.found) {
+    final victimContact = GuardianManager.getAllContacts()[relay['nodeId']];
+    final victimAddress = victimContact is Map ? victimContact['anchoring_address'] as String? : null;
+    final anchoredByVictim = victimAddress == null ? existing.found : existing.bySigner(victimAddress) != null;
+    if (!anchoredByVictim) {
       final txHash = await AnchoringService.recordAnchor(
         manifestHashHex: manifestHash,
         cid: cid,

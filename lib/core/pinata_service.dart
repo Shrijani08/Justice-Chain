@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+import 'authority_service.dart';
 
 class PinataUploadException implements Exception {
   final String message;
@@ -12,8 +15,13 @@ class PinataUploadException implements Exception {
   String toString() => message;
 }
 
+/// Uploads encrypted clips to IPFS through Pinata. The phone holds no
+/// Pinata key: the gateway hands it a one-time upload URL for each file
+/// (POST /upload-url), so a copied APK can't upload to, list or delete
+/// the project's pins (judge review finding S1). A PINATA_JWT in the app
+/// config is used instead only by developer builds without a gateway.
 class PinataService {
-  static const String _pinataApiUrl = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
+  static const String _legacyUrl = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
 
   // Some networks silently drop large POSTs instead of rejecting them, which
   // otherwise looks like an infinite hang. Budget assumes a ~2 Mbps floor so
@@ -24,23 +32,44 @@ class PinataService {
   static Duration uploadTimeoutFor(int fileBytes) =>
       _baseTimeout + Duration(seconds: fileBytes ~/ _minBytesPerSecond);
 
+  /// Test seams: where a one-time upload URL comes from, and the client.
+  @visibleForTesting
+  static Future<String> Function(int size)? uploadUrlForTest;
+  @visibleForTesting
+  static http.Client Function()? clientForTest;
+
+  static String? get _legacyJwt {
+    final jwt = dotenv.isInitialized ? dotenv.env['PINATA_JWT']?.trim() : null;
+    return jwt == null || jwt.isEmpty ? null : jwt;
+  }
+
   /// Returns the CID, or throws [PinataUploadException] with a user-facing reason.
   static Future<String> uploadToIPFS(String filePath) async {
-    final jwt = dotenv.env['PINATA_JWT'];
-    if (jwt == null || jwt.isEmpty) {
-      throw PinataUploadException('Pinata JWT not configured in .env');
+    final viaGateway = uploadUrlForTest != null || AuthorityService.ledgerFeaturesEnabled;
+    if (!viaGateway && _legacyJwt == null) {
+      throw PinataUploadException('No gateway (GATEWAY_URL) configured for uploads');
     }
-
     final file = File(filePath);
-    final timeout = uploadTimeoutFor(await file.length());
+    final size = await file.length();
+    final timeout = uploadTimeoutFor(size);
 
-    final request = http.MultipartRequest('POST', Uri.parse(_pinataApiUrl))
-      ..headers['Authorization'] = 'Bearer $jwt'
-      ..files.add(await http.MultipartFile.fromPath('file', filePath));
+    final http.MultipartRequest request;
+    if (viaGateway) {
+      final String url;
+      try {
+        url = await (uploadUrlForTest ?? AuthorityService.requireGateway().uploadUrl)(size);
+      } catch (e) {
+        throw PinataUploadException('Could not get an upload link from the gateway: $e');
+      }
+      request = http.MultipartRequest('POST', Uri.parse(url))..fields['network'] = 'public';
+    } else {
+      request = http.MultipartRequest('POST', Uri.parse(_legacyUrl))..headers['Authorization'] = 'Bearer $_legacyJwt';
+    }
+    request.files.add(await http.MultipartFile.fromPath('file', filePath));
 
     // A dedicated client so a timeout can close the socket rather than
     // leaving the upload running in the background.
-    final client = http.Client();
+    final client = clientForTest?.call() ?? http.Client();
     try {
       final response = await client.send(request).timeout(timeout);
       final body = await response.stream.bytesToString().timeout(_baseTimeout);
@@ -51,8 +80,8 @@ class PinataService {
         );
       }
 
-      final cid = (jsonDecode(body) as Map<String, dynamic>)['IpfsHash'];
-      if (cid is! String || cid.isEmpty) {
+      final cid = cidFromResponse(jsonDecode(body));
+      if (cid == null || cid.isEmpty) {
         throw PinataUploadException('Pinata response did not include a CID');
       }
       return cid;
@@ -67,5 +96,15 @@ class PinataService {
     } finally {
       client.close();
     }
+  }
+
+  /// The CID in a Pinata reply: v3 uploads answer {data: {cid}}, the legacy
+  /// pinning API {IpfsHash}.
+  @visibleForTesting
+  static String? cidFromResponse(Object? json) {
+    if (json is! Map) return null;
+    final data = json['data'];
+    if (data is Map && data['cid'] is String) return data['cid'] as String;
+    return json['IpfsHash'] is String ? json['IpfsHash'] as String : null;
   }
 }

@@ -38,6 +38,11 @@ class OutboxService {
 
   static const Set<String> _meshJobTypes = {jobKeyShare, jobMeshRelay, jobShareForward};
 
+  /// Jobs that get evidence off the phone and onto IPFS and the ledger. They
+  /// never give up: a phone offline for days must still upload in the end,
+  /// so they keep retrying at the capped backoff instead of failing.
+  static const Set<String> _evidenceJobTypes = {jobUpload, jobAnchor, jobRelayUpload};
+
   static const int _maxAttempts = 20;
   static const Duration _baseBackoff = Duration(seconds: 30);
   static const Duration _maxBackoff = Duration(hours: 1);
@@ -67,6 +72,7 @@ class OutboxService {
         unawaited(retryAllNow().then((_) => process()));
       }
     });
+    await reviveEvidenceJobs();
     // Jobs may have backed off for many minutes while the app was closed.
     await retryAllNow();
     unawaited(process());
@@ -81,6 +87,20 @@ class OutboxService {
       final raw = _box.get(id);
       if (raw is! Map || raw['failed'] == true) continue;
       final job = Map<String, dynamic>.from(raw)..['nextAttemptAt'] = now;
+      await _box.put(id, job);
+    }
+  }
+
+  /// Puts evidence jobs that an older build marked failed back in the
+  /// queue, with fresh attempts.
+  static Future<void> reviveEvidenceJobs() async {
+    for (final id in _box.keys.toList()) {
+      final raw = _box.get(id);
+      if (raw is! Map || raw['failed'] != true || !_evidenceJobTypes.contains(raw['type'])) continue;
+      final job = Map<String, dynamic>.from(raw)
+        ..['failed'] = false
+        ..['attempts'] = 0
+        ..['nextAttemptAt'] = DateTime.now().toIso8601String();
       await _box.put(id, job);
     }
   }
@@ -240,7 +260,7 @@ class OutboxService {
       job['attempts'] = attempts;
       job['lastError'] = e.toString();
       job['nextAttemptAt'] = DateTime.now().add(backoff).toIso8601String();
-      job['failed'] = attempts >= _maxAttempts;
+      job['failed'] = attempts >= _maxAttempts && !_evidenceJobTypes.contains(job['type']);
       await _box.put(id, job);
       developer.log(
         'Outbox job $id failed (attempt $attempts): $e',

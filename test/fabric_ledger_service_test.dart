@@ -219,6 +219,25 @@ void main() {
     });
   });
 
+  test('verifyEvidence reads later claims by other signers, with their blocks', () async {
+    const mine = '0x2222222222222222222222222222222222222222';
+    final ledger = FabricLedgerService(
+      gatewayUrl: 'http://gw:8800',
+      client: MockClient((_) async => _json({
+            ..._record(),
+            'claims': [
+              {..._record(blockNumber: 12), 'signer': mine, 'cid': 'bafymine'},
+            ],
+          })),
+    );
+
+    final result = await ledger.verifyEvidence(_hash);
+    expect(result.signer, _signer);
+    expect(result.blockNumber, 8);
+    expect(result.claims.single.cid, 'bafymine');
+    expect(result.bySigner(mine)?.blockNumber, 12);
+  });
+
   group('AnchoringService', () {
     late _FakeLedger fake;
     setUp(() => AnchoringService.ledgerForTest = fake = _FakeLedger());

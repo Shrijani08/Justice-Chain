@@ -133,9 +133,14 @@ function createDeviceDesk({ dir, ledger, mailbox }) {
       if (!list.found || !list.guardians.includes(toNodeId)) {
         throw badRequest("The recipient is not on the owner's guardian list");
       }
-      const anchor = await ledger.verifyEvidence(manifestHash);
-      if (!anchor.found || anchor.nodeId !== fromNodeId ||
-          anchor.signer !== String(cert.deviceAnchoringAddress).toLowerCase()) {
+      // The device's own anchor: the record, or a claim if someone else
+      // anchored the clip first (chaincode 1.7).
+      const found = await ledger.verifyEvidence(manifestHash);
+      const deviceAddress = String(cert.deviceAnchoringAddress).toLowerCase();
+      const anchor = found.found
+        ? [found, ...(found.claims || [])].find((a) => a.nodeId === fromNodeId && a.signer === deviceAddress)
+        : null;
+      if (!anchor) {
         throw badRequest('The clip is not anchored by this device');
       }
 
