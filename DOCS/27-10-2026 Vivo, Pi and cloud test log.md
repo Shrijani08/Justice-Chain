@@ -59,3 +59,23 @@ All 274 app tests pass after the fixes.
 - AI scream tests 2–5 on the Vivo, then on the Samsung.
 - Install the new APKs on the Samsung and the OnePlus. Their old builds can no
   longer upload, because the old Pinata and gateway keys are revoked.
+
+## Evening session (19:56–20:05): smaller clips and hold-to-stop on the SOS device
+
+**Why:** on a weak phone hotspot, 45 MB clips (1080p, 8 Mbps) took very long to
+upload and some uploads broke halfway (SSL EOF), restarting from zero.
+
+**Changes:**
+- The device now records 1280×720 at 2 Mbps instead of 1920×1080 at 8 Mbps.
+- Holding the button again stops the recording early. Holds in the first 5 s are
+  ignored. The maximum length stays 45 s.
+- Whatever was recorded before a stop is locked and uploaded as usual.
+
+All 48 device tests pass on the Pi, including 3 new recorder tests.
+
+| Test | Result |
+|---|---|
+| Start, then stop with a second hold after about 15 s | PASS. Recorded 19:58:24 → 19:58:41, locked 19:58:44. Clip **3.7 MB** (about 16 MB at the old setting). Uploaded in about **20 s**, anchored (tx `56466288…`), pieces sent to both guardians and the owner key to the owner, device copy deleted. |
+| Played that clip on the Vivo (My evidence) | PASS. Picture and sound fine. |
+| Second hold 3.6 s after starting | PASS. Ignored ("Too soon to stop"); recording continued. |
+| No stop | PASS. Stopped by itself at 45 s (20:03:03 → locked 20:03:53). Uploaded in about 52 s, anchored (tx `66e39f60…`), pieces and owner key sent, device copy deleted. Expected size about 12 MB (45 MB before); not measured, because Pinata's public gateway answered 429. |

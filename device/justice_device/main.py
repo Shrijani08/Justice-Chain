@@ -1,9 +1,10 @@
 """The SOS device program, started at power-on by systemd (sos.service).
 
-Hold the button 1 second: record 45 s of video and sound, then lock the clip
-at once (sealer). Only the locked clip and its record are kept. A background
-thread then uploads it to IPFS and records it on the ledger (outbox),
-retrying every 30 s while there is no network. The same thread collects the
+Hold the button 1 second: record up to 45 s of video and sound; hold it again
+(after the first 5 s) to stop early. Then lock the clip at once (sealer).
+Only the locked clip and its record are kept. A background thread then
+uploads it to IPFS and records it on the ledger (outbox), retrying every
+30 s while there is no network. The same thread collects the
 owner's setup package from the gateway (linking), every 30 s until linked and
 every 5 minutes after, so guardian changes reach the device.
 
@@ -17,6 +18,7 @@ Status LED (implementation plan):
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from signal import pause
@@ -26,7 +28,8 @@ from gpiozero import LED, Button
 from . import linking, network, outbox, recorder, sealer, settings
 from .identity import DEFAULT_KEYS_DIR, load_or_create
 
-RECORD_SECONDS = 45
+RECORD_SECONDS = 45  # the most; a second hold stops sooner
+MIN_SECONDS_BEFORE_STOP = 5  # a bounce or a long first hold can't end the clip at once
 BUTTON_PIN = 17
 LED_PIN = 27
 WORK_DIR = Path.home() / "sos_clips" / "recording"  # plaintext exists here only until it is locked
@@ -42,6 +45,8 @@ class Device:
         self.button = Button(BUTTON_PIN, hold_time=1)
         self.busy = threading.Lock()
         self.recording = False
+        self.stop = threading.Event()
+        self.started_at = 0.0
         self.waiting = 0
         self.wake = threading.Event()
 
@@ -74,17 +79,34 @@ class Device:
         self.waiting += 1
         self.wake.set()
 
-    def on_sos(self) -> None:
-        if not self.busy.acquire(blocking=False):
-            print("Already recording, ignoring the button", flush=True)
+    def on_hold(self) -> None:
+        """Button held 1 s: start a recording, or stop the one running."""
+        if self.recording:
+            if self.stop.is_set():
+                return
+            if time.monotonic() - self.started_at < MIN_SECONDS_BEFORE_STOP:
+                print(f"Too soon to stop (first {MIN_SECONDS_BEFORE_STOP} s), still recording", flush=True)
+                return
+            print("Stop asked for, finishing the clip", flush=True)
+            self.stop.set()
             return
+        if not self.busy.acquire(blocking=False):
+            print("Still locking the last clip, ignoring the button", flush=True)
+            return
+        # Record in its own thread so the button can still be heard to stop it.
+        self.stop.clear()
+        self.recording = True
+        self.started_at = time.monotonic()
+        threading.Thread(target=self.on_sos, name="sos").start()
+
+    def on_sos(self) -> None:
+        """Records and locks one clip. The caller holds self.busy; it is released here."""
         try:
             captured_at = datetime.now(timezone.utc)
             name = f"sos_{captured_at:%Y%m%d_%H%M%S}"
-            print(f"SOS! Recording {RECORD_SECONDS} s of video + sound", flush=True)
-            self.recording = True
+            print(f"SOS! Recording up to {RECORD_SECONDS} s of video + sound (hold again to stop)", flush=True)
             self.led.blink(on_time=0.1, off_time=0.1)
-            clip = recorder.record_clip(WORK_DIR, name, RECORD_SECONDS)
+            clip = recorder.record_clip(WORK_DIR, name, RECORD_SECONDS, self.stop)
             if clip is not None:
                 self.lock(clip, captured_at)
         except Exception as e:
@@ -163,7 +185,7 @@ class Device:
         self.waiting = len(outbox.pending(EVIDENCE_DIR, linking.load_certificate(DEFAULT_KEYS_DIR)))
         self.wake.set()
         threading.Thread(target=self.upload_loop, daemon=True).start()
-        self.button.when_held = self.on_sos
+        self.button.when_held = self.on_hold
         self.show_idle()
         print("Ready. Hold the button for 1 second to start an SOS recording.", flush=True)
         pause()
