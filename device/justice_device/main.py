@@ -13,6 +13,7 @@ Status LED (implementation plan):
   solid on                    ready, everything uploaded
   solid, short dip every 2 s  ready, clips waiting to upload
   fast blink                  recording and locking
+  3 quick flashes             stop heard; back to fast blink while it locks
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ WORK_DIR = Path.home() / "sos_clips" / "recording"  # plaintext exists here only
 EVIDENCE_DIR = Path.home() / "sos_evidence"  # <hash>.enc + <hash>.json
 RETRY_SECONDS = 30  # while clips are waiting
 IDLE_CHECK_SECONDS = 300
+STOP_FLASHES = 3
 
 
 class Device:
@@ -89,6 +91,7 @@ class Device:
                 return
             print("Stop asked for, finishing the clip", flush=True)
             self.stop.set()
+            self.flash_stopped()
             return
         if not self.busy.acquire(blocking=False):
             print("Still locking the last clip, ignoring the button", flush=True)
@@ -98,6 +101,12 @@ class Device:
         self.recording = True
         self.started_at = time.monotonic()
         threading.Thread(target=self.on_sos, name="sos").start()
+
+    def flash_stopped(self) -> None:
+        """Quick flashes so the user knows the stop was heard, then fast blink while the clip locks."""
+        self.led.blink(on_time=0.06, off_time=0.12, n=STOP_FLASHES, background=False)
+        if self.recording:  # still locking; if already done, on_sos has shown the idle light
+            self.led.blink(on_time=0.1, off_time=0.1)
 
     def on_sos(self) -> None:
         """Records and locks one clip. The caller holds self.busy; it is released here."""
