@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../core/co_guardian_service.dart';
 import '../core/evidence_vault_service.dart';
 import '../core/recovery_service.dart';
 import 'design/components.dart';
@@ -8,9 +9,11 @@ import 'pin_gate.dart';
 import 'design/tokens.dart';
 import 'evidence_player_screen.dart';
 
-/// Lists this device's own encrypted evidence records and lets the user
-/// open one for playback. Only the self-wrapped key is used here — this is
-/// the victim reviewing their own clips, not a guardian.
+/// Lists this device's own encrypted evidence records, and clips the user's
+/// SOS device recorded, and lets the user open one for playback. Only the
+/// user's own keys are used here (the self-wrapped key, or the key her SOS
+/// device sealed for her) — this is the victim reviewing their own clips,
+/// not a guardian.
 class EvidenceViewerScreen extends StatefulWidget {
   const EvidenceViewerScreen({super.key});
 
@@ -22,6 +25,14 @@ enum _Filter { all, ledger, pending }
 
 class _EvidenceViewerScreenState extends State<EvidenceViewerScreen> {
   _Filter _filter = _Filter.all;
+
+  @override
+  void initState() {
+    super.initState();
+    // Clips her SOS device recorded arrive through the mailbox; they show up
+    // through the box listener.
+    CoGuardianService.fetchMailbox().catchError((Object _) => 0);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -168,7 +179,9 @@ class _EvidenceCard extends StatelessWidget {
     // Restored from the ledger after a recovery: no local file;
     // fetched from IPFS and opened with the recovery code's key.
     final restored = status == RecoveryService.restoredStatus;
-    final canPlay = restored || (cipherPath != null && wrappedKey != null);
+    // Recorded by her SOS device: opened with the key it sealed for this phone.
+    final fromDevice = data['source'] == 'sos-device';
+    final canPlay = restored || (cipherPath != null && wrappedKey != null) || (fromDevice && data['ownerKey'] != null);
 
     final (color, label, thumb) = switch (status) {
       _ when restored => (Ember.rose, 'Restored from ledger', const [Color(0xFF5E6B8C), Color(0xFF1C2030)]),
@@ -188,7 +201,8 @@ class _EvidenceCard extends StatelessWidget {
 
     return Semantics(
       button: canPlay,
-      label: 'Recording $whenText, $label${police != null ? ', shared with the police' : ''}',
+      label: 'Recording $whenText, $label${fromDevice ? ', from your SOS device' : ''}'
+          '${police != null ? ', shared with the police' : ''}',
       child: Pressable(
         enabled: canPlay,
         child: GestureDetector(
@@ -233,6 +247,7 @@ class _EvidenceCard extends StatelessWidget {
                           runSpacing: 4,
                           children: [
                             StatusPill(label: label, color: color),
+                            if (fromDevice) const StatusPill(label: 'SOS device', color: Ember.rose, icon: Icons.sensors_rounded),
                             if (police != null) police,
                           ],
                         ),

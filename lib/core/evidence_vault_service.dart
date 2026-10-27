@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -311,22 +313,83 @@ class EvidenceVaultService {
   /// the clip's hash.
   static Future<Uint8List> openOwnClip(String recordKey) async {
     final raw = _vaultBox.get(recordKey);
+    if (raw is Map && raw['wrappedKey'] == null && raw['ownerKey'] != null) return _openDeviceClip(recordKey, raw);
     if (raw is! Map || raw['wrappedKey'] == null) throw StateError('No such clip on this phone');
     final wrappedKey = raw['wrappedKey'] as String;
     final path = raw['path'] as String?;
     if (path != null && await File(path).exists()) return EvidenceEncryptor.decryptFile(path, wrappedKey);
 
-    final cid = raw['cid'] as String?;
+    final plaintext = await EvidenceEncryptor.decryptBytes(await _download(raw['cid'] as String?), wrappedKey);
+    if (crypto.sha256.convert(plaintext).toString() != recordKey) {
+      throw StateError('The downloaded clip does not match its record');
+    }
+    return plaintext;
+  }
+
+  static Future<Uint8List> _download(String? cid) async {
     if (cid == null) throw StateError('This clip has no local copy and no IPFS address yet');
     final gateway = (dotenv.isInitialized ? dotenv.env['IPFS_GATEWAY'] : null) ?? 'https://gateway.pinata.cloud/ipfs/';
     final client = clientForTest ?? http.Client();
     final response = await client.get(Uri.parse('$gateway$cid')).timeout(const Duration(minutes: 3));
     if (response.statusCode != 200) throw StateError('Downloading the clip failed (HTTP ${response.statusCode})');
+    return response.bodyBytes;
+  }
 
-    final plaintext = await EvidenceEncryptor.decryptBytes(response.bodyBytes, wrappedKey);
+  /// Saves a clip this user's SOS device recorded, from the key the device
+  /// sealed for her ([sealedKey], a share with x = 0 whose y is the whole
+  /// key). Checked by the caller; it lists in My evidence beside her phone's
+  /// own clips and plays from IPFS ([openOwnClip]).
+  static Future<void> saveDeviceClip({
+    required String manifestHash,
+    required String sealedKey,
+    required Map certificate,
+    required Map share,
+    int? blockNumber,
+  }) async {
+    final existing = _vaultBox.get(manifestHash);
+    if (existing is Map && existing['wrappedKey'] != null) return; // never replace a phone clip
+    await _vaultBox.put(manifestHash, {
+      'hash': manifestHash,
+      'source': 'sos-device',
+      'status': 'anchored',
+      'cid': share['cid'],
+      'timestamp': share['capturedAt'],
+      'signature': share['signature'],
+      'ownerKey': sealedKey,
+      'deviceNodeId': certificate['deviceNodeId'],
+      'deviceEd25519': certificate['deviceEd25519'],
+      'deviceX25519': certificate['deviceX25519'],
+      if (blockNumber != null) 'blockNumber': blockNumber,
+      'localCopyDeleted': true,
+    });
+  }
+
+  /// An SOS device clip: downloaded from IPFS, opened with the key the
+  /// device sealed for this phone, then checked against its hash and the
+  /// device's signature.
+  static Future<Uint8List> _openDeviceClip(String recordKey, Map record) async {
+    final share = await EvidenceEncryptor.unsealGuardianShare(
+      sealedShareB64: record['ownerKey'] as String,
+      ownX25519KeyPair: await IdentityService.getX25519KeyPair(),
+      senderX25519PublicKeyB64: record['deviceX25519'] as String,
+    );
+    if (share.x != 0) throw StateError('This is a guardian piece, not the owner key');
+
+    final plaintext = await EvidenceEncryptor.decryptBytesWithKey(
+      await _download(record['cid'] as String?),
+      SecretKey(List<int>.from(share.y)),
+    );
     if (crypto.sha256.convert(plaintext).toString() != recordKey) {
       throw StateError('The downloaded clip does not match its record');
     }
+    final signed = await Ed25519().verify(
+      utf8.encode(recordKey),
+      signature: Signature(
+        base64Decode(record['signature'] as String),
+        publicKey: SimplePublicKey(base64Decode(record['deviceEd25519'] as String), type: KeyPairType.ed25519),
+      ),
+    );
+    if (!signed) throw StateError("The SOS device's signature does not verify");
     return plaintext;
   }
 

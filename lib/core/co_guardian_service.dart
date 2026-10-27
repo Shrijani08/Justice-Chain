@@ -12,6 +12,7 @@ import '../logic/guardian_manager.dart';
 import 'authority_service.dart';
 import 'device_link_service.dart';
 import 'evidence_encryptor.dart';
+import 'evidence_vault_service.dart';
 import 'identity_service.dart';
 import 'ledger/fabric_ledger_service.dart';
 import 'mesh_service.dart';
@@ -307,6 +308,12 @@ class CoGuardianService {
     for (final env in envelopes) {
       final id = env['id'] as String;
       try {
+        if (env['kind'] == 'device' && env['victimNodeId'] == me) {
+          await _storeOwnDeviceClip(env, me);
+          stored++;
+          done.add(id);
+          continue;
+        }
         if (env['kind'] == 'device') {
           // Null: from someone this phone hasn't paired with yet, so it can't
           // be checked; it stays in the mailbox until they pair.
@@ -395,5 +402,33 @@ class CoGuardianService {
       'receivedAt': DateTime.now().toIso8601String(),
     });
     return 1;
+  }
+
+  /// Saves a clip this user's own SOS device recorded, from the key it
+  /// sealed for her phone, so it lists in My evidence. Trusted only if her
+  /// own key certified the device and the device signed both the message
+  /// and the clip.
+  static Future<void> _storeOwnDeviceClip(Map env, String me) async {
+    final myKey = (jsonDecode(await IdentityService.getQrPayload()) as Map)['public_key'] as String;
+    if (!await DeviceLinkService.verifyDevicePiece(env, me: me, victimEd25519: myKey)) {
+      throw UntrustedLedgerRecord("SOS device key doesn't check out");
+    }
+    final hash = env['manifestHash'] as String;
+    final cert = Map<String, dynamic>.from(env['certificate'] as Map);
+    final share = Map<String, dynamic>.from(env['share'] as Map? ?? const {});
+    final clipSignature = share['signature'];
+    if (share['cid'] is! String ||
+        clipSignature is! String ||
+        !await _verifyEd25519(cert['deviceEd25519'] as String, hash, clipSignature)) {
+      throw UntrustedLedgerRecord('SOS device clip is not signed by the device');
+    }
+    await EvidenceVaultService.saveDeviceClip(
+      manifestHash: hash,
+      sealedKey: env['sealedShare'] as String,
+      certificate: cert,
+      share: share,
+      blockNumber: env['blockNumber'] as int?,
+    );
+    developer.log('Added SOS device clip $hash to My evidence', name: 'JusticeChain.CoGuardian');
   }
 }

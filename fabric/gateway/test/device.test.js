@@ -125,6 +125,20 @@ test("pieces only go to the owner's guardians, for clips the device anchored", a
   );
 });
 
+test("the owner's own key reaches her phone's mailbox, though she is not her own guardian", async () => {
+  const { desk: d, mailbox } = desk();
+  const sealedShare = crypto.randomBytes(61).toString('base64');
+  const pieceHash = pieceHashOf(sealedShare);
+  await d.putPiece(piece({
+    toNodeId: OWNER.nodeId,
+    sealedShare,
+    signature: DEVICE.sign(piecePayload(HASH, OWNER.nodeId, DEVICE.nodeId, OWNER.nodeId, pieceHash)),
+  }));
+  const [stored] = mailbox.list(OWNER.nodeId);
+  assert.equal(stored.kind, 'device');
+  assert.equal(stored.toNodeId, OWNER.nodeId);
+});
+
 test("a device clip someone else anchored first still takes pieces, from the device's own claim", async () => {
   const { desk: d, mailbox } = desk({
     verifyEvidence: async (hash) => ({

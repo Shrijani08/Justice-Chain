@@ -14,6 +14,7 @@ import 'package:justice_chain/core/authority_service.dart';
 import 'package:justice_chain/core/co_guardian_service.dart';
 import 'package:justice_chain/core/device_link_service.dart';
 import 'package:justice_chain/core/evidence_encryptor.dart';
+import 'package:justice_chain/core/evidence_vault_service.dart';
 import 'package:justice_chain/core/identity_service.dart';
 import 'package:justice_chain/core/ledger/fabric_ledger_service.dart';
 import 'package:justice_chain/core/mesh_service.dart';
@@ -461,6 +462,116 @@ void main() {
       expect(await CoGuardianService.fetchMailbox(), 0);
       expect(Hive.box(MeshService.receivedSharesBoxName).isEmpty, isTrue);
       expect(gateway.mailbox[me], isEmpty);
+    });
+  });
+
+  group("clips this user's own SOS device recorded", () {
+    final plaintext = Uint8List.fromList(List<int>.generate(3000, (i) => (i * 7) % 256));
+    final ownClip = _sha256Hex(plaintext);
+
+    Uint8List pack(SecretBox box) => Uint8List.fromList([...box.nonce, ...box.mac.bytes, ...box.cipherText]);
+
+    /// The device's message to this phone and the clip's ciphertext, sealed
+    /// as device/justice_device/sealer.py does: the owner key is a share with
+    /// x = 0 whose y is the whole clip key.
+    Future<({Map<String, dynamic> env, Uint8List cipher})> ownDeviceClip({bool certifiedByMe = true, bool clipSigned = true}) async {
+      final deviceEd = await Ed25519().newKeyPair();
+      final deviceEdPub = base64Encode((await deviceEd.extractPublicKey()).bytes);
+      final deviceX = await X25519().newKeyPair();
+      final deviceXPub = base64Encode((await deviceX.extractPublicKey()).bytes);
+      final deviceNode = _sha256Hex(base64Decode(deviceEdPub)).substring(0, 16);
+      Future<String> deviceSign(String text) async =>
+          base64Encode((await Ed25519().sign(utf8.encode(text), keyPair: deviceEd)).bytes);
+
+      final key = SecretKey(List<int>.generate(32, (i) => i + 1));
+      final cipher = pack(await AesGcm.with256bits().encrypt(plaintext, secretKey: key));
+      final myX = (jsonDecode(await IdentityService.getQrPayload()) as Map)['x25519_public_key'] as String;
+      final shared = await X25519().sharedSecretKey(
+          keyPair: deviceX, remotePublicKey: SimplePublicKey(base64Decode(myX), type: KeyPairType.x25519));
+      final wrap = await Hkdf(hmac: Hmac.sha256(), outputLength: 32)
+          .deriveKey(secretKey: shared, info: utf8.encode('justice-chain-guardian-wrap-v1'));
+      final sealed = base64Encode(pack(await AesGcm.with256bits().encrypt([0, ...await key.extractBytes()], secretKey: wrap)));
+      final pieceHash = _sha256Hex(base64Decode(sealed));
+
+      final cert = <String, Object>{
+        'deviceNodeId': deviceNode,
+        'deviceEd25519': deviceEdPub,
+        'deviceX25519': deviceXPub,
+        'deviceAnchoringAddress': '0xd9d08a9aeb67749a252fc0ec7afa925e1467366f',
+        'ownerNodeId': me,
+        'issuedAt': 1792900000,
+      };
+      cert['signature'] = certifiedByMe
+          ? await IdentityService.signBytes(utf8.encode(DeviceLinkService.certificatePayload(cert)))
+          : await victim.edSign(DeviceLinkService.certificatePayload(cert));
+      return (
+        cipher: cipher,
+        env: <String, dynamic>{
+          'id': 'e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0',
+          'kind': 'device',
+          'manifestHash': ownClip,
+          'victimNodeId': me,
+          'fromNodeId': deviceNode,
+          'toNodeId': me,
+          'sealedShare': sealed,
+          'pieceHash': pieceHash,
+          'senderX25519': deviceXPub,
+          'signature': await deviceSign(DeviceLinkService.piecePayload(ownClip, me, deviceNode, me, pieceHash)),
+          'certificate': cert,
+          'share': {
+            'cid': 'bafyownclip',
+            'capturedAt': '2026-10-27T10:00:00+00:00',
+            'quorum': 2,
+            'signature': await deviceSign(clipSigned ? ownClip : 'something else'),
+            'source': 'sos-device',
+          },
+          'blockNumber': 350,
+        },
+      );
+    }
+
+    tearDown(() => EvidenceVaultService.clientForTest = null);
+
+    test('lists the clip in My evidence and plays it from IPFS with the key sealed for this phone', () async {
+      final clip = await ownDeviceClip();
+      gateway.mailbox[me] = [clip.env];
+      expect(await CoGuardianService.fetchMailbox(), 1);
+      expect(gateway.mailbox[me], isEmpty);
+
+      final record = vault.get(ownClip) as Map;
+      expect(record['source'], 'sos-device');
+      expect(record['status'], 'anchored');
+      expect(record['cid'], 'bafyownclip');
+      expect(record['blockNumber'], 350);
+      expect(Hive.box(MeshService.receivedSharesBoxName).isEmpty, isTrue); // not a guardian piece
+
+      EvidenceVaultService.clientForTest = MockClient((r) async {
+        expect(r.url.path, endsWith('bafyownclip'));
+        return http.Response.bytes(clip.cipher, 200);
+      });
+      expect(await EvidenceVaultService.openOwnClip(ownClip), plaintext);
+    });
+
+    test("drops the clip when the device wasn't certified with this phone's key", () async {
+      gateway.mailbox[me] = [(await ownDeviceClip(certifiedByMe: false)).env];
+      expect(await CoGuardianService.fetchMailbox(), 0);
+      expect(vault.get(ownClip), isNull);
+      expect(gateway.mailbox[me], isEmpty);
+    });
+
+    test('drops the clip when the device did not sign it', () async {
+      gateway.mailbox[me] = [(await ownDeviceClip(clipSigned: false)).env];
+      expect(await CoGuardianService.fetchMailbox(), 0);
+      expect(vault.get(ownClip), isNull);
+    });
+
+    test('refuses to play a download that is not the clip', () async {
+      final clip = await ownDeviceClip();
+      gateway.mailbox[me] = [clip.env];
+      await CoGuardianService.fetchMailbox();
+      final tampered = Uint8List.fromList(clip.cipher)..[40] ^= 1;
+      EvidenceVaultService.clientForTest = MockClient((_) async => http.Response.bytes(tampered, 200));
+      await expectLater(EvidenceVaultService.openOwnClip(ownClip), throwsA(anything));
     });
   });
 }

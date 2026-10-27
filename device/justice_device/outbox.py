@@ -4,7 +4,8 @@ the guardians, retrying until it does.
 The to-do list is the evidence folder itself: each <hash>.json record moves
 locally_secured -> uploaded_to_ipfs -> anchored, as in the app's vault. Once
 the device is linked (it holds an owner certificate), each guardian's sealed
-piece then goes to their gateway mailbox ("piecesSent"). Once enough
+piece then goes to their gateway mailbox ("piecesSent"), and the owner's
+sealed key to the whole clip to hers ("ownerKeySent"). Once enough
 guardians hold their pieces to open the clip, the device deletes its own
 encrypted copy and its own key to it ("localCopyDeleted"): its keys sit on
 the same card, so whoever takes the device could otherwise open the clip.
@@ -44,6 +45,16 @@ def _pieces_due(record: dict, certificate: dict | None) -> list[str]:
     return [g for g in record.get("guardianShares", {}) if g not in done]
 
 
+def _owner_key_due(record: dict, certificate: dict | None) -> bool:
+    """True while the owner's phone still waits for its sealed key to an
+    anchored clip, so the clip shows in her own evidence list."""
+    if certificate is None or record.get("status") != DONE or "ownerKey" not in record:
+        return False
+    if record.get("ownerNodeId") != certificate["ownerNodeId"]:
+        return False
+    return not record.get("ownerKeySent") and "ownerKeyRefused" not in record
+
+
 def _can_drop_local_copy(record: dict) -> bool:
     """True once every guardian holds their piece, enough of them to open
     the clip, so the device's own copy and key are no longer needed."""
@@ -74,7 +85,12 @@ def pending(evidence_dir: Path, certificate: dict | None = None) -> list[Path]:
             record = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        if record.get("status") not in (DONE, REFUSED) or _pieces_due(record, certificate) or _can_drop_local_copy(record):
+        if (
+            record.get("status") not in (DONE, REFUSED)
+            or _pieces_due(record, certificate)
+            or _owner_key_due(record, certificate)
+            or _can_drop_local_copy(record)
+        ):
             paths.append(path)
     return paths
 
@@ -127,19 +143,28 @@ def _anchor(path: Path, record: dict, identity: Identity, pinata, gateway) -> No
 
 def piece_envelope(record: dict, guardian: str, identity: Identity, certificate: dict) -> dict:
     """One guardian's sealed piece, with what their phone needs to check and open the clip."""
-    sealed = record["guardianShares"][guardian]
+    return _envelope(record, guardian, record["guardianShares"][guardian], identity, certificate)
+
+
+def owner_key_envelope(record: dict, identity: Identity, certificate: dict) -> dict:
+    """The owner's sealed key to the whole clip, sent the way pieces are,
+    addressed to her own phone."""
+    return _envelope(record, certificate["ownerNodeId"], record["ownerKey"], identity, certificate)
+
+
+def _envelope(record: dict, recipient: str, sealed: str, identity: Identity, certificate: dict) -> dict:
     piece_hash = hashlib.sha256(cc.unb64(sealed)).hexdigest()
     owner = certificate["ownerNodeId"]
     return {
         "manifestHash": record["hash"],
         "victimNodeId": owner,
         "fromNodeId": identity.node_id,
-        "toNodeId": guardian,
+        "toNodeId": recipient,
         "sealedShare": sealed,
         "pieceHash": piece_hash,
         "senderX25519": cc.b64(identity.x25519_public),
         "signature": linking.sign_text(
-            identity, linking.piece_payload(record["hash"], owner, identity.node_id, guardian, piece_hash)
+            identity, linking.piece_payload(record["hash"], owner, identity.node_id, recipient, piece_hash)
         ),
         "certificate": certificate,
         "share": {
@@ -167,6 +192,19 @@ def _send_pieces(path: Path, record: dict, identity: Identity, gateway, certific
         _save(path, record)
 
 
+def _send_owner_key(path: Path, record: dict, identity: Identity, gateway, certificate: dict) -> None:
+    if not _owner_key_due(record, certificate):
+        return
+    try:
+        gateway.send_piece(owner_key_envelope(record, identity, certificate))
+        record["ownerKeySent"] = True
+        print(f"Sent the owner her key to {record['hash'][:16]}…", flush=True)
+    except LedgerRefused as e:
+        record["ownerKeyRefused"] = str(e)
+        print(f"Gateway refused the owner's key: {e}", flush=True)
+    _save(path, record)
+
+
 def process_record(path: Path, identity: Identity, pinata, gateway, certificate: dict | None = None) -> str:
     """Moves one record as far as it can go. Returns its new status.
     Raises ServiceError when the network fails, so the caller retries later."""
@@ -175,6 +213,7 @@ def process_record(path: Path, identity: Identity, pinata, gateway, certificate:
         _anchor(path, record, identity, pinata, gateway)
     if certificate is not None:
         _send_pieces(path, record, identity, gateway, certificate)
+        _send_owner_key(path, record, identity, gateway, certificate)
     if _can_drop_local_copy(record):
         _drop_local_copy(path, record)
     return record["status"]

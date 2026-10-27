@@ -150,8 +150,11 @@ class PieceGateway(FakeGateway):
         return {"id": "x"}
 
 
+OWNER_PRIVATE = os.urandom(32)
+
+
 def linked_clip(tmp_path, device, guardian_count=2):
-    owner = {"nodeId": "0" * 16, "x25519Public": cc.b64(cc.x25519_public(os.urandom(32)))}
+    owner = {"nodeId": "0" * 16, "x25519Public": cc.b64(cc.x25519_public(OWNER_PRIVATE))}
     guardians = [
         {"nodeId": f"{i}" * 16, "x25519Public": cc.b64(cc.x25519_public(os.urandom(32)))}
         for i in range(1, guardian_count + 1)
@@ -170,12 +173,44 @@ def test_each_guardian_gets_their_signed_piece_once(tmp_path, device):
     assert outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway, certificate) == 0
     assert outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway, certificate) == 0
 
-    assert sorted(e["toNodeId"] for e in gateway.pieces) == sorted(record["guardianShares"])
-    envelope = gateway.pieces[0]
+    pieces = [e for e in gateway.pieces if e["toNodeId"] != "0" * 16]
+    assert sorted(e["toNodeId"] for e in pieces) == sorted(record["guardianShares"])
+    envelope = pieces[0]
     assert envelope["certificate"] == certificate and envelope["victimNodeId"] == "0" * 16
     assert envelope["share"]["cid"] == "Qm1" and envelope["share"]["quorum"] == 2
     payload = linking.piece_payload(record["hash"], "0" * 16, device.node_id, envelope["toNodeId"], envelope["pieceHash"])
     assert linking.verify_text(envelope["share"]["deviceEd25519"], payload, envelope["signature"])
+
+
+def test_the_owner_gets_her_signed_key_once_and_it_opens_the_clip(tmp_path, device):
+    from justice_device import linking
+
+    record, certificate = linked_clip(tmp_path, device)
+    cipher = (tmp_path / "evidence" / record["file"]).read_bytes()
+    gateway = PieceGateway()
+    outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway, certificate)
+    outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway, certificate)
+
+    [envelope] = [e for e in gateway.pieces if e["toNodeId"] == "0" * 16]
+    assert envelope["sealedShare"] == record["ownerKey"] and envelope["victimNodeId"] == "0" * 16
+    payload = linking.piece_payload(record["hash"], "0" * 16, device.node_id, "0" * 16, envelope["pieceHash"])
+    assert linking.verify_text(envelope["share"]["deviceEd25519"], payload, envelope["signature"])
+    assert saved(tmp_path, record)["ownerKeySent"] is True
+    assert sealer.open_with_owner_key(record, cipher, OWNER_PRIVATE)
+
+
+def test_a_clip_finished_before_owner_keys_existed_still_sends_hers(tmp_path, device):
+    record, certificate = linked_clip(tmp_path, device)
+    path = tmp_path / "evidence" / f"{record['hash']}.json"
+    old = {**record, "status": "anchored", "cid": "Qm1", "piecesSent": list(record["guardianShares"]), "localCopyDeleted": True}
+    old.pop("wrappedKey")
+    path.write_text(json.dumps(old))
+    (tmp_path / "evidence" / record["file"]).unlink()
+
+    gateway = PieceGateway()
+    assert outbox.pending(tmp_path / "evidence", certificate) == [path]
+    assert outbox.process_all(tmp_path / "evidence", device, FakePinata(), gateway, certificate) == 0
+    assert [e["toNodeId"] for e in gateway.pieces] == ["0" * 16]
 
 
 def test_clips_for_a_test_owner_are_not_sent(tmp_path, device):

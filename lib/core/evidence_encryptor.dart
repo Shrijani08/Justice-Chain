@@ -324,6 +324,11 @@ class EvidenceEncryptor {
     return Uint8List.fromList(await AesGcm.with256bits().decrypt(_unpackSecretBox(cipherBytes), secretKey: incidentKey));
   }
 
+  /// Like [decryptBytes], with the incident key itself (e.g. an SOS device
+  /// clip, whose key the device sealed for its owner).
+  static Future<Uint8List> decryptBytesWithKey(List<int> cipherBytes, SecretKey incidentKey) async =>
+      Uint8List.fromList(await AesGcm.with256bits().decrypt(_unpackSecretBox(cipherBytes), secretKey: incidentKey));
+
   /// Decrypts a `.enc` file from a guardian quorum's unsealed shares. A
   /// wrong or insufficient set of shares fails AES-GCM authentication.
   static Future<Uint8List> decryptFileWithShares({

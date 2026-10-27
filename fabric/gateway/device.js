@@ -10,7 +10,9 @@
  *    device; the newest package replaces the last.
  *  - Pieces: after anchoring a clip, the device leaves each guardian their
  *    sealed key piece in the same mailbox co-guardians use, so guardians
- *    get device clips without the phone-to-phone mesh.
+ *    get device clips without the phone-to-phone mesh. The owner's own
+ *    sealed key to the clip goes to her phone the same way, so the clip
+ *    shows in her evidence list.
  *
  * The gateway checks everything it can before storing, and the device and
  * the guardians' phones check it all again themselves.
@@ -129,9 +131,13 @@ function createDeviceDesk({ dir, ledger, mailbox }) {
         throw badRequest("The piece is not signed by the device's key");
       }
 
-      const list = await ledger.getGuardians(victimNodeId);
-      if (!list.found || !list.guardians.includes(toNodeId)) {
-        throw badRequest("The recipient is not on the owner's guardian list");
+      // The owner's own key to the clip goes to her phone; pieces go only to
+      // her guardians.
+      if (toNodeId !== victimNodeId) {
+        const list = await ledger.getGuardians(victimNodeId);
+        if (!list.found || !list.guardians.includes(toNodeId)) {
+          throw badRequest("The recipient is not on the owner's guardian list");
+        }
       }
       // The device's own anchor: the record, or a claim if someone else
       // anchored the clip first (chaincode 1.7).
