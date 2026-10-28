@@ -98,6 +98,22 @@ void main() {
       expect(outbox.keys, ['key_share:rec1:xabc']);
     });
 
+    test('at most 10 guardians: a new 11th is refused, re-pairing and replacing still work', () async {
+      await seed({for (var i = 0; i < 10; i++) 'node$i': contact('G$i')});
+
+      expect(GuardianManager.canAdd('node10'), isFalse);
+      expect(GuardianManager.canAdd('node3'), isTrue);
+      await expectLater(
+        GuardianManager.addGuardian(nodeId: 'node10', publicKey: 'ed', name: 'Eleven'),
+        throwsA(isA<GuardianLimitReached>()),
+      );
+      expect(GuardianManager.getAllContacts().containsKey('node10'), isFalse);
+
+      // A removed guardian frees a place.
+      await GuardianManager.removeGuardian('node0');
+      expect(GuardianManager.canAdd('node10'), isTrue);
+    });
+
     test('removing an unknown contact does nothing', () async {
       await seed({'nodeA': contact('Alex')});
       await GuardianManager.removeGuardian('nobody');

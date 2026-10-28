@@ -153,7 +153,17 @@ class _ScanState extends State<_Scan> with SingleTickerProviderStateMixin {
     if (mounted) Navigator.pop(context);
   }
 
+  static const _limitMessage =
+      'You already have ${GuardianManager.maxGuardians} guardians, the most allowed. Remove one in Guardians to add someone new.';
+
   Future<void> _promptForName(String nodeId, String publicKey, String? x25519PublicKey, String? anchoringAddress) async {
+    // Check before asking for a name, so nobody types one for nothing.
+    if (!GuardianManager.canAdd(nodeId)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_limitMessage)));
+      setState(() => _isProcessing = false);
+      return;
+    }
+
     final controller = TextEditingController();
     final name = await showSakSheet<String>(
       context,
@@ -217,7 +227,9 @@ class _ScanState extends State<_Scan> with SingleTickerProviderStateMixin {
       );
     } catch (e) {
       developer.log('Failed to save guardian', error: e);
-      messenger.showSnackBar(const SnackBar(content: Text('Could not save guardian. Please scan again.')));
+      messenger.showSnackBar(SnackBar(
+        content: Text(e is GuardianLimitReached ? _limitMessage : 'Could not save guardian. Please scan again.'),
+      ));
       if (mounted) setState(() => _isProcessing = false);
       return;
     }

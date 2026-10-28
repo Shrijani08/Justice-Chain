@@ -8,6 +8,12 @@ import '../core/evidence_vault_service.dart';
 import '../core/mesh_service.dart';
 import '../core/outbox_service.dart';
 
+/// Thrown when pairing would take the victim past [GuardianManager.maxGuardians].
+class GuardianLimitReached implements Exception {
+  @override
+  String toString() => 'GuardianLimitReached: at most ${GuardianManager.maxGuardians} guardians';
+}
+
 /// Paired contacts. Pairing is mutual, so each entry is both someone who
 /// holds this phone's key pieces and someone whose relayed clips this phone
 /// accepts when acting as their guardian.
@@ -15,6 +21,17 @@ class GuardianManager {
   static Box get _box => Hive.box('vault_box');
   static const String _guardiansKey = 'trusted_guardians';
   static const String allowSingleGuardianKey = 'allow_single_guardian';
+
+  /// Matches MAX_GUARDIANS in the chaincode: SetGuardians refuses a longer
+  /// list, so an 11th guardian would hold pieces the ledger never lists.
+  static const int maxGuardians = 10;
+
+  /// Whether [nodeId] may be paired now. Re-pairing a current guardian is
+  /// always allowed; a new one only while fewer than [maxGuardians] are trusted.
+  static bool canAdd(String nodeId) {
+    final trusted = getTrustedGuardians();
+    return trusted.containsKey(nodeId) || trusted.length < maxGuardians;
+  }
 
   /// Opt-in: while fewer than two guardians can hold key pieces, new
   /// recordings can be opened by any one guardian. Off by default.
@@ -43,6 +60,8 @@ class GuardianManager {
     String? x25519PublicKey,
     String? anchoringAddress,
   }) async {
+    if (!canAdd(nodeId)) throw GuardianLimitReached();
+
     // Fetch existing map or create a new one if empty. Re-pairing a removed
     // contact replaces the entry, which also clears its removal.
     Map guardians = _allContacts();
