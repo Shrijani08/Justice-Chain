@@ -16,6 +16,7 @@ import 'device_link_service.dart';
 import 'evidence_encryptor.dart';
 import 'identity_service.dart';
 import 'mesh_service.dart';
+import 'plain_summary.dart';
 import 'shamir.dart';
 
 /// One incident a guardian holds something for: key shares, a relayed
@@ -64,14 +65,36 @@ class VerificationCheck {
 }
 
 class VerifiedClip {
-  VerifiedClip({required this.plaintext, required this.checks, this.anchorSummary});
+  VerifiedClip({
+    required this.plaintext,
+    required this.checks,
+    this.anchorSummary,
+    this.ownerName = 'The victim',
+    this.fromSosDevice = false,
+    this.recordedAt,
+    this.blockNumber,
+  });
   final Uint8List plaintext;
   final List<VerificationCheck> checks;
 
   /// e.g. "Verified: anchored in block 12 at 2026-10-04 14:02".
   final String? anchorSummary;
 
+  final String ownerName;
+  final bool fromSosDevice;
+  final DateTime? recordedAt;
+  final int? blockNumber;
+
   bool get fullyVerified => checks.every((c) => c.passed == true);
+
+  /// The checks in plain words, for someone who isn't technical.
+  PlainSummary get summary => PlainSummary.ofChecks(
+        checks,
+        owner: ownerName,
+        fromSosDevice: fromSosDevice,
+        recordedAt: recordedAt,
+        blockNumber: blockNumber,
+      );
 }
 
 /// Guardian-side retrieval and verification (blueprint Phase 5): gather a
@@ -200,6 +223,8 @@ class GuardianEvidenceService {
 
     // 6. On-chain record and block.
     String? anchorSummary;
+    int? blockNumber;
+    DateTime? recordedAt = incident.capturedAt;
     if (anchor == null) {
       checks.add(const VerificationCheck('Anchored on-chain', null, 'Chain unreachable — could not check'));
     } else if (!anchor.found) {
@@ -232,6 +257,8 @@ class GuardianEvidenceService {
           ? (blockNumber: own.blockNumber!, blockTime: null)
           : await AnchoringService.findAnchorBlock(manifestHash);
       anchorSummary = 'Verified: ${describeAnchor(block, own)}';
+      blockNumber = block?.blockNumber;
+      recordedAt = own.capturedAt;
       checks.add(VerificationCheck(
         'Anchored on-chain',
         true,
@@ -239,7 +266,15 @@ class GuardianEvidenceService {
       ));
     }
 
-    return VerifiedClip(plaintext: plaintext, checks: checks, anchorSummary: anchorSummary);
+    return VerifiedClip(
+      plaintext: plaintext,
+      checks: checks,
+      anchorSummary: anchorSummary,
+      ownerName: incident.victimName,
+      fromSosDevice: sosDevice != null,
+      recordedAt: recordedAt,
+      blockNumber: blockNumber,
+    );
   }
 
   static Future<String> _obtainCiphertext(String manifestHash, String? cid) async {

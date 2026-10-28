@@ -35,6 +35,7 @@ const grpc = require('@grpc/grpc-js');
 const { connect, signers } = require('@hyperledger/fabric-gateway');
 const { common } = require('@hyperledger/fabric-protos');
 const { openBox, unsealShare, combineShares } = require('../network/lib/evidence-crypto.cjs');
+const { plainSummary } = require('./summary');
 
 const ORGS_DIR = process.env.FABRIC_ORGS_DIR ||
   '\\\\wsl.localhost\\Ubuntu\\home\\sara_khurshida\\fabric\\fabric-samples\\test-network\\organizations';
@@ -206,12 +207,14 @@ async function openClip(hash) {
   const token = crypto.randomBytes(24).toString('hex');
   videos.set(token, clip);
   setTimeout(() => videos.delete(token), VIDEO_TTL_MS).unref();
-  return { checks, record, videoUrl: `/api/videos/${token}` };
+  return { checks, record, summary: plainSummary(checks, record), videoUrl: `/api/videos/${token}` };
 }
 
 /** Chaincode refusals become 400 with the chaincode's message. */
 function toHttpError(err) {
-  if (err.httpStatus) return { status: err.httpStatus, message: err.message, checks: err.checks };
+  if (err.httpStatus) {
+    return { status: err.httpStatus, message: err.message, checks: err.checks, summary: err.checks && plainSummary(err.checks) };
+  }
   const detail = (err.details || []).map((d) => d.message).find(Boolean) || '';
   const match = /chaincode response \d+, (.*)$/s.exec(detail) || /chaincode response \d+, (.*)$/s.exec(err.message || '');
   if (match) return { status: 400, message: match[1].trim() };
@@ -281,7 +284,7 @@ const server = http.createServer(async (req, res) => {
     const httpErr = toHttpError(err);
     status = httpErr.status;
     if (status >= 500) console.error(err);
-    send(res, status, { error: httpErr.message, checks: httpErr.checks });
+    send(res, status, { error: httpErr.message, checks: httpErr.checks, summary: httpErr.summary });
   }
   console.log(`${new Date().toISOString()} ${req.method} ${url.pathname} ${status} ${Date.now() - started}ms`);
 });

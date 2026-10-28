@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/portal.test.js"
+    "test": "node --test test/portal.test.js test/summary.test.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",

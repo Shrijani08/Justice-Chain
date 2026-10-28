@@ -53,6 +53,8 @@ class AppServices {
       logger.w("Checking the key-piece mailbox failed: $e");
       return 0;
     }));
+    // And again every minute while the app is on screen.
+    CoGuardianService.startPolling();
     // Keeps a linked SOS device's guardian list current.
     if (AuthorityService.ledgerFeaturesEnabled) {
       unawaited(DeviceLinkService.sendSetup().catchError((Object e) {

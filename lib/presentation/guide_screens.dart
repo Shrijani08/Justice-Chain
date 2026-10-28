@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/disguise_service.dart';
+import '../core/identity_service.dart';
 import '../core/protection_service.dart';
+import '../logic/guardian_manager.dart';
 import 'design/components.dart';
 import 'design/tokens.dart';
+import 'guardians_screen.dart';
+import 'recovery_code_screen.dart';
 import 'setup_screens.dart';
 
 /// One line of the "Keep it running" check.
@@ -71,6 +75,44 @@ abstract final class BackgroundHealth {
   }
 
   static Future<int> problems() async => (await check()).where((i) => !i.ok).length;
+}
+
+/// Everything a new user should finish, in one list: her guardians and her
+/// recovery code, then the background checks. Home shows how far she is
+/// until it is all done.
+abstract final class SafetySetup {
+  static const minGuardians = 2;
+
+  static Future<List<HealthItem>> check() async => [
+        guardiansItem(GuardianManager.getTrustedGuardians().length),
+        recoveryCodeItem(saved: await IdentityService.pendingRecoveryCode() == null),
+        ...await BackgroundHealth.check(),
+      ];
+
+  static ({int done, int total}) progress(List<HealthItem> items) =>
+      (done: items.where((i) => i.ok).length, total: items.length);
+
+  @visibleForTesting
+  static HealthItem guardiansItem(int paired) => HealthItem(
+        title: 'Guardians',
+        ok: paired >= minGuardians,
+        detail: switch (paired) {
+          0 => 'Add $minGuardians people you trust',
+          1 => '1 paired; add 1 more so a clip can be opened',
+          _ => '$paired paired',
+        },
+        icon: Icons.group_outlined,
+        fix: () => const GuardiansScreen(),
+      );
+
+  @visibleForTesting
+  static HealthItem recoveryCodeItem({required bool saved}) => HealthItem(
+        title: 'Recovery code',
+        ok: saved,
+        detail: saved ? 'Written down' : 'Write it down, or a lost phone loses your clips',
+        icon: Icons.key_rounded,
+        fix: () => Builder(builder: (context) => RecoveryCodeScreen(onDone: () => Navigator.pop(context))),
+      );
 }
 
 /// The user guide, from Home's ? and Profile.
@@ -481,9 +523,28 @@ class _MiniKeys extends StatelessWidget {
 }
 
 /// "Keep it running": this phone's background protection, checked live,
-/// with a Fix for anything that isn't right.
+/// with a Fix for anything that isn't right. With [SafetySetup.check] it is
+/// the "Finish setup" list instead.
 class GuideBackgroundScreen extends StatefulWidget {
-  const GuideBackgroundScreen({super.key});
+  const GuideBackgroundScreen({
+    super.key,
+    this.check = BackgroundHealth.check,
+    this.title = 'Keep it running',
+    this.subtitle = "Check this after a phone update, or if a recording didn't start.",
+    this.showTips = true,
+  });
+
+  /// The setup checklist from Home.
+  const GuideBackgroundScreen.setup({super.key})
+      : check = SafetySetup.check,
+        title = 'Finish setup',
+        subtitle = 'Each item keeps your recordings safe. Tap Fix to do it now.',
+        showTips = false;
+
+  final Future<List<HealthItem>> Function() check;
+  final String title;
+  final String subtitle;
+  final bool showTips;
 
   @override
   State<GuideBackgroundScreen> createState() => _GuideBackgroundScreenState();
@@ -511,7 +572,7 @@ class _GuideBackgroundScreenState extends State<GuideBackgroundScreen> with Widg
   }
 
   Future<void> _refresh() async {
-    final items = await BackgroundHealth.check();
+    final items = await widget.check();
     if (mounted) setState(() => _items = items);
   }
 
@@ -534,9 +595,9 @@ class _GuideBackgroundScreenState extends State<GuideBackgroundScreen> with Widg
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SakTopBar(title: 'Guide'),
+            SakTopBar(title: widget.showTips ? 'Guide' : 'Setup'),
             const SizedBox(height: 16),
-            const ScreenTitle('Keep it running', subtitle: "Check this after a phone update, or if a recording didn't start.", size: 32),
+            ScreenTitle(widget.title, subtitle: widget.subtitle, size: 32),
             const SizedBox(height: 16),
             Glass(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -597,20 +658,22 @@ class _GuideBackgroundScreenState extends State<GuideBackgroundScreen> with Widg
                     ),
                 ],
               ),
-            const SizedBox(height: 20),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Good to know', style: context.type.labelMedium),
-                  const SizedBox(height: 10),
-                  const _GoodToKnow(Icons.restart_alt_rounded, 'After the phone restarts, open Sakshya once to turn protection back on.'),
-                  const SizedBox(height: 10),
-                  const _GoodToKnow(Icons.call_outlined, 'A phone call pauses nothing. Listening carries on after you hang up.'),
-                ],
+            if (widget.showTips) ...[
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Good to know', style: context.type.labelMedium),
+                    const SizedBox(height: 10),
+                    const _GoodToKnow(Icons.restart_alt_rounded, 'After the phone restarts, open Sakshya once to turn protection back on.'),
+                    const SizedBox(height: 10),
+                    const _GoodToKnow(Icons.call_outlined, 'A phone call pauses nothing. Listening carries on after you hang up.'),
+                  ],
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

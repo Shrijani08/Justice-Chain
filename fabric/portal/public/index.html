@@ -77,6 +77,9 @@
   .dot.fail { background: var(--bad); }
   .notice { background: var(--ok-bg); border: 1px solid #B9DEC8; border-radius: 8px; padding: 18px 24px; color: #12452A; font-size: 14px; }
   .error { background: var(--bad-bg); color: var(--bad); border-radius: 6px; padding: 10px 14px; font-size: 14px; }
+  .summary { border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .summary.verified { background: var(--ok-bg); } .summary.failed { background: var(--bad-bg); }
+  .summary b { font-size: 15px; color: var(--ink); } .summary span { font-size: 13px; color: var(--ink2); }
   .checks { margin: 0; padding: 0; list-style: none; } .checks li { display: flex; gap: 12px; padding: 11px 0; border-top: 1px solid #EEF0F4; }
   .checks li div { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .checks li span { font-size: 13px; color: var(--ink2); word-break: break-word; }
   video { width: 100%; aspect-ratio: 16 / 9; background: #0B0F18; border-radius: 6px; }
@@ -163,7 +166,7 @@ const SIGNED_IN = 'evidence-desk-signed-in';
 async function api(path, options = {}) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
   const body = await res.json();
-  if (!res.ok) throw Object.assign(new Error(body.error || res.statusText), { checks: body.checks });
+  if (!res.ok) throw Object.assign(new Error(body.error || res.statusText), { checks: body.checks, summary: body.summary });
   return body;
 }
 
@@ -351,6 +354,13 @@ async function viewClip(main, hash) {
   $('#open-btn', main).addEventListener('click', (event) => openClip(event.target, hash));
 }
 
+// The result in plain words, above the technical checks.
+function renderSummary(summary) {
+  if (!summary) return '';
+  return `<div class="summary ${summary.tone === 'verified' ? 'verified' : 'failed'}" role="status"><b>${esc(summary.headline)}</b>
+    ${summary.notes.map((n) => `<span>${esc(n)}</span>`).join('')}</div>`;
+}
+
 function renderChecks(checks) {
   return `<ol class="checks">${(checks || []).map((c) => `<li><span class="dot ${c.ok ? 'done' : 'fail'}" style="flex-basis:22px;height:22px">${c.ok ? tick : cross}</span>
     <div><b style="font-size:14px">${esc(c.name)}</b>${c.detail ? `<span>${esc(c.detail)}</span>` : ''}</div></li>`).join('')}</ol>`;
@@ -364,7 +374,7 @@ async function openClip(button, hash) {
   try {
     const opened = await api(`/api/clips/${hash}/open`, { method: 'POST' });
     out.innerHTML = `<div class="cols">
-      <section class="card" style="flex:2 1 420px;min-width:0" aria-labelledby="checks"><h2 id="checks">Verification</h2>${renderChecks(opened.checks)}</section>
+      <section class="card" style="flex:2 1 420px;min-width:0" aria-labelledby="checks"><h2 id="checks">Verification</h2>${renderSummary(opened.summary)}${renderChecks(opened.checks)}</section>
       <section class="card" style="flex:3 1 520px;min-width:0" aria-labelledby="clip">
         <div class="head" style="align-items:center"><h2 id="clip">Decrypted clip</h2><span class="hint">Link expires in 10 minutes</span></div>
         <video controls src="${esc(opened.videoUrl)}"></video>
@@ -372,7 +382,7 @@ async function openClip(button, hash) {
       </section></div>`;
     out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
-    out.innerHTML = `<section class="card"><h2>Verification</h2>${renderChecks(err.checks)}<div class="error">${esc(err.message)}</div></section>`;
+    out.innerHTML = `<section class="card"><h2>Verification</h2>${renderSummary(err.summary)}${renderChecks(err.checks)}<div class="error">${esc(err.message)}</div></section>`;
   }
   button.disabled = false;
 }

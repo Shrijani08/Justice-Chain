@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import 'dart:developer' as developer;
 
 import '../core/guardian_evidence_service.dart';
+import '../core/plain_summary.dart';
 import 'design/components.dart';
 import 'design/tokens.dart';
 
@@ -21,7 +22,7 @@ class EvidencePlayerScreen extends StatefulWidget {
     required this.loadPlaintext,
     this.title,
     this.checks,
-    this.anchorSummary,
+    this.summary,
   });
 
   /// The fingerprint (or name) under the title.
@@ -31,7 +32,11 @@ class EvidencePlayerScreen extends StatefulWidget {
 
   /// Shown above the video when present (guardian verification results).
   final List<VerificationCheck>? checks;
-  final String? anchorSummary;
+
+  /// The result in plain words, above the checks. Without [checks] (the
+  /// owner's own clip, which only opens if it matches its fingerprint) it is
+  /// shown once the clip has opened.
+  final PlainSummary? summary;
 
   @override
   State<EvidencePlayerScreen> createState() => _EvidencePlayerScreenState();
@@ -117,8 +122,8 @@ class _EvidencePlayerScreenState extends State<EvidencePlayerScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          if (widget.checks != null) ...[
-            Reveal(child: _VerificationPanel(checks: widget.checks!, anchorSummary: widget.anchorSummary)),
+          if (widget.summary != null && (widget.checks != null || ready)) ...[
+            Reveal(child: _VerificationPanel(summary: widget.summary!, checks: widget.checks ?? const [])),
             const SizedBox(height: 14),
           ],
           Expanded(
@@ -301,16 +306,28 @@ class _Transport extends StatelessWidget {
   }
 }
 
-class _VerificationPanel extends StatelessWidget {
-  const _VerificationPanel({required this.checks, this.anchorSummary});
+class _VerificationPanel extends StatefulWidget {
+  const _VerificationPanel({required this.summary, required this.checks});
 
+  final PlainSummary summary;
   final List<VerificationCheck> checks;
-  final String? anchorSummary;
+
+  @override
+  State<_VerificationPanel> createState() => _VerificationPanelState();
+}
+
+class _VerificationPanelState extends State<_VerificationPanel> {
+  bool _showChecks = false;
 
   @override
   Widget build(BuildContext context) {
-    final allPassed = checks.every((c) => c.passed == true);
-    final tone = allPassed ? Ember.sealed : Ember.attention;
+    final summary = widget.summary;
+    final checks = widget.checks;
+    final (tone, icon) = switch (summary.tone) {
+      SummaryTone.verified => (Ember.sealed, Icons.verified_user_outlined),
+      SummaryTone.failed => (Ember.alertText, Icons.gpp_bad_outlined),
+      SummaryTone.unchecked => (Ember.attention, Icons.gpp_maybe_outlined),
+    };
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -322,13 +339,27 @@ class _VerificationPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(allPassed ? Icons.verified_user_outlined : Icons.gpp_maybe_outlined, color: tone, size: 22),
+              Icon(icon, color: tone, size: 22),
               const SizedBox(width: 10),
-              Expanded(child: Text(anchorSummary ?? (allPassed ? 'Verified' : 'Not fully verified'), style: context.type.titleSmall)),
+              Expanded(child: Text(summary.headline, style: context.type.titleSmall)),
             ],
           ),
-          const SizedBox(height: 10),
+          for (final note in summary.notes)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, left: 32),
+              child: Text(note, style: const TextStyle(fontFamily: SakFont.body, fontSize: 13, height: 18 / 13, color: Ember.ink2)),
+            ),
+          if (checks.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, left: 22),
+              child: TextButton(
+                onPressed: () => setState(() => _showChecks = !_showChecks),
+                child: Text(_showChecks ? 'Hide the technical checks' : 'Show the ${checks.length} technical checks'),
+              ),
+            ),
+          if (_showChecks)
           for (final check in checks)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),

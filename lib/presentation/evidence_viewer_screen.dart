@@ -3,6 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../core/co_guardian_service.dart';
 import '../core/evidence_vault_service.dart';
+import '../core/plain_summary.dart';
 import '../core/recovery_service.dart';
 import 'design/components.dart';
 import 'pin_gate.dart';
@@ -30,9 +31,12 @@ class _EvidenceViewerScreenState extends State<EvidenceViewerScreen> {
   void initState() {
     super.initState();
     // Clips her SOS device recorded arrive through the mailbox; they show up
-    // through the box listener.
-    CoGuardianService.fetchMailbox().catchError((Object _) => 0);
+    // through the box listener. The app also checks every minute while open,
+    // and pulling the list down checks at once.
+    _refresh();
   }
+
+  Future<void> _refresh() => CoGuardianService.fetchMailbox().catchError((Object _) => 0);
 
   @override
   Widget build(BuildContext context) {
@@ -97,23 +101,27 @@ class _EvidenceViewerScreenState extends State<EvidenceViewerScreen> {
                           message: 'Recordings appear here, sealed and encrypted, the moment they stop.',
                         ),
                       )
-                    : ListView.separated(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        itemCount: shown.length + 1,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (context, i) {
-                          if (i == shown.length) {
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 14, bottom: 12),
-                              child: Text(
-                                'Each recording is named by its SHA-256 fingerprint.\nAny change to the file would change it.',
-                                textAlign: TextAlign.center,
-                                style: context.type.labelSmall?.copyWith(color: Ember.ink3, height: 17 / 12),
-                              ),
-                            );
-                          }
-                          return Reveal(index: i, child: _EvidenceCard(entry: shown[i]));
-                        },
+                    : RefreshIndicator(
+                        onRefresh: _refresh,
+                        child: ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.only(bottom: 16),
+                          itemCount: shown.length + 1,
+                          separatorBuilder: (_, _) => const SizedBox(height: 10),
+                          itemBuilder: (context, i) {
+                            if (i == shown.length) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 14, bottom: 12),
+                                child: Text(
+                                  'Each recording is named by its SHA-256 fingerprint.\nAny change to the file would change it.',
+                                  textAlign: TextAlign.center,
+                                  style: context.type.labelSmall?.copyWith(color: Ember.ink3, height: 17 / 12),
+                                ),
+                              );
+                            }
+                            return Reveal(index: i, child: _EvidenceCard(entry: shown[i]));
+                          },
+                        ),
                       ),
               ),
             ],
@@ -217,6 +225,14 @@ class _EvidenceCard extends StatelessWidget {
                             : EvidenceVaultService.openOwnClip(entry.key as String),
                         title: whenText,
                         label: hash.length > 12 ? hash.substring(0, 12) : hash,
+                        // openOwnClip only returns once the fingerprint (and a
+                        // device clip's signature) matched.
+                        summary: restored
+                            ? null
+                            : PlainSummary.ownClip(
+                                fromSosDevice: fromDevice,
+                                recordedAt: DateTime.tryParse(data['timestamp'] as String? ?? ''),
+                              ),
                       ),
                     ),
                   ),

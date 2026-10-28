@@ -553,6 +553,7 @@ class _MainSafetyScreenState extends State<MainSafetyScreen> with WidgetsBinding
                             onFix: () => _push(const GuideBackgroundScreen()),
                           ),
                         ),
+                        const Reveal(index: 4, child: _SetupCard()),
                       ],
                     ),
                   );
@@ -725,6 +726,82 @@ class _Tile extends StatelessWidget {
                     label.toUpperCase(),
                     style: const TextStyle(fontFamily: SakFont.mono, fontSize: 11, letterSpacing: 1.4, color: Color(0xD9FFFFFF)),
                   ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Finish setup · 4 of 6 done" until everything on the setup list is
+/// done; then it disappears.
+class _SetupCard extends StatefulWidget {
+  const _SetupCard();
+
+  @override
+  State<_SetupCard> createState() => _SetupCardState();
+}
+
+class _SetupCardState extends State<_SetupCard> with WidgetsBindingObserver {
+  ({int done, int total})? _progress;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_refresh());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    final progress = SafetySetup.progress(await SafetySetup.check());
+    if (mounted) setState(() => _progress = progress);
+  }
+
+  Future<void> _open() async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const GuideBackgroundScreen.setup()));
+    await _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _progress;
+    if (progress == null || progress.done == progress.total) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Semantics(
+        button: true,
+        label: 'Finish setup, ${progress.done} of ${progress.total} done',
+        child: Pressable(
+          child: GestureDetector(
+            onTap: _open,
+            child: Glass(
+              radius: 20,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  const Icon(Icons.checklist_rounded, size: 20, color: Ember.attention),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Finish setup', style: context.type.bodyMedium?.copyWith(fontSize: 14, height: 19 / 14))),
+                  Text(
+                    '${progress.done} of ${progress.total} done',
+                    style: const TextStyle(fontFamily: SakFont.body, fontSize: 12, fontWeight: FontWeight.w700, color: Ember.attention),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chevron_right_rounded, size: 20, color: Ember.ink2),
                 ],
               ),
             ),

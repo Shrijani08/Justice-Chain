@@ -249,7 +249,7 @@ class _IncidentCard extends StatelessWidget {
             label: incident.manifestHash.length > 12 ? incident.manifestHash.substring(0, 12) : incident.manifestHash,
             loadPlaintext: () async => clip.plaintext,
             checks: clip.checks,
-            anchorSummary: clip.anchorSummary,
+            summary: clip.summary,
           ),
         ),
       );

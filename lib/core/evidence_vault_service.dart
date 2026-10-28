@@ -309,19 +309,19 @@ class EvidenceVaultService {
   }
 
   /// One of this phone's own clips, decrypted: from the local copy while it
-  /// exists, else downloaded from IPFS. Throws if the download doesn't match
-  /// the clip's hash.
+  /// exists, else downloaded from IPFS. Throws if the clip doesn't match its
+  /// hash, so the player can say it is unchanged.
   static Future<Uint8List> openOwnClip(String recordKey) async {
     final raw = _vaultBox.get(recordKey);
     if (raw is Map && raw['wrappedKey'] == null && raw['ownerKey'] != null) return _openDeviceClip(recordKey, raw);
     if (raw is! Map || raw['wrappedKey'] == null) throw StateError('No such clip on this phone');
     final wrappedKey = raw['wrappedKey'] as String;
     final path = raw['path'] as String?;
-    if (path != null && await File(path).exists()) return EvidenceEncryptor.decryptFile(path, wrappedKey);
-
-    final plaintext = await EvidenceEncryptor.decryptBytes(await _download(raw['cid'] as String?), wrappedKey);
+    final plaintext = path != null && await File(path).exists()
+        ? await EvidenceEncryptor.decryptFile(path, wrappedKey)
+        : await EvidenceEncryptor.decryptBytes(await _download(raw['cid'] as String?), wrappedKey);
     if (crypto.sha256.convert(plaintext).toString() != recordKey) {
-      throw StateError('The downloaded clip does not match its record');
+      throw StateError('The clip does not match its record');
     }
     return plaintext;
   }

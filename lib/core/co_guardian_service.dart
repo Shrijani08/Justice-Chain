@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:typed_data';
@@ -5,6 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/widgets.dart' show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:web3dart/web3dart.dart' as web3;
 
@@ -65,6 +67,13 @@ class CoGuardianService {
   static const String _pendingForwardsKey = 'piece_forwards';
 
   static FabricLedgerService get _ledger => AuthorityService.requireGateway();
+
+  /// How often the mailbox is checked while the app is open on screen, so
+  /// a clip from her SOS device shows up without restarting the app.
+  static const Duration pollEvery = Duration(seconds: 60);
+  static Future<int>? _fetching;
+  static Timer? _pollTimer;
+  static AppLifecycleListener? _lifecycle;
 
   // Checking ledger records
 
@@ -295,7 +304,32 @@ class CoGuardianService {
   /// the mailbox. Returns how many were stored. Pieces that fail a check are
   /// cleared too, so they aren't fetched forever; ones that couldn't be
   /// checked (offline) stay for next time.
-  static Future<int> fetchMailbox() async {
+  ///
+  /// Calls made while a check is running share that check, so two never
+  /// store or acknowledge the same pieces at once.
+  static Future<int> fetchMailbox() =>
+      _fetching ??= _fetchMailbox().whenComplete(() => _fetching = null);
+
+  /// Checks the mailbox every [pollEvery] while the app is on screen, and
+  /// at once whenever it comes back to the screen. Nothing runs while it is
+  /// in the background, to spare the battery.
+  static void startPolling() {
+    _pollTimer?.cancel();
+    _lifecycle?.dispose();
+    _pollTimer = Timer.periodic(pollEvery, (_) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) _pollQuietly();
+    });
+    _lifecycle = AppLifecycleListener(onResume: _pollQuietly);
+  }
+
+  static void _pollQuietly() {
+    fetchMailbox().catchError((Object e) {
+      developer.log('Mailbox check failed: $e', name: 'JusticeChain.CoGuardian');
+      return 0;
+    });
+  }
+
+  static Future<int> _fetchMailbox() async {
     if (!AuthorityService.ledgerFeaturesEnabled) return 0;
     final ledger = _ledger;
     final me = await IdentityService.getMyNodeId();

@@ -80,6 +80,7 @@ class _FakeGateway {
   final posts = <String, List<Map<String, dynamic>>>{};
   bool down = false;
   bool failNextForward = false;
+  int mailboxReads = 0;
 
   http.Response _json(Object body, [int status = 200]) => http.Response(jsonEncode(body), status);
 
@@ -94,6 +95,7 @@ class _FakeGateway {
         case 'guardians':
           return _json(guardians[id] ?? {'found': false, 'victimNodeId': id});
         case 'pieces':
+          mailboxReads++;
           return _json(mailbox[id] ?? []);
       }
       return _json({'error': 'Not found'}, 404);
@@ -531,6 +533,18 @@ void main() {
     }
 
     tearDown(() => EvidenceVaultService.clientForTest = null);
+
+    test('two checks at the same time share one: the clip is stored and acknowledged once', () async {
+      gateway.mailbox[me] = [(await ownDeviceClip()).env];
+      final counts = await Future.wait([CoGuardianService.fetchMailbox(), CoGuardianService.fetchMailbox()]);
+      expect(counts, [1, 1]);
+      expect(gateway.mailboxReads, 1);
+      expect(gateway.posts.keys.where((k) => k.endsWith('/ack')).map((k) => gateway.posts[k]!.length), [1]);
+      expect(vault.get(ownClip), isNotNull);
+
+      expect(await CoGuardianService.fetchMailbox(), 0); // a later check runs again
+      expect(gateway.mailboxReads, 2);
+    });
 
     test('lists the clip in My evidence and plays it from IPFS with the key sealed for this phone', () async {
       final clip = await ownDeviceClip();
