@@ -30,15 +30,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # State Management & Caching
+  # State management, local vault, ML inference, and live PCM audio capture.
   signals_flutter: ^6.3.0
   hive_flutter: ^1.1.0
-  
+  tflite_flutter: ^0.11.0
+  record: ^6.2.0
+  permission_handler: ^11.3.1
+  path_provider: ^2.1.3
   # Debugging
   logger: ^2.4.0
   camera: ^0.10.5          # To control the lens
-  path_provider: ^2.1.1    # To find a safe place to save the video
-  permission_handler: ^11.0.1 # To ask the user for permission
+  #path_provider: ^2.1.1    # To find a safe place to save the video
+  #permission_handler: ^11.0.1 # To ask the user for permission
   crypto: ^3.0.3           # To generate the SHA-256 hash later
 
   # The following adds the Cupertino Icons font to your application.
@@ -66,7 +69,8 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-
+  assets:
+    - assets/models/justice_chain_model.tflite
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
