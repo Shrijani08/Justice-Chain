@@ -66,3 +66,10 @@ fabric/gateway/pinata-jwt.txt
 fabric/gateway/tunnel.txt
 fabric/gateway/mailbox/
 fabric/gateway/device-setup/
+
+# local tool folders
+.claude/
+.agents/
+skills-lock.json
+~/
+DOCS/paper/
